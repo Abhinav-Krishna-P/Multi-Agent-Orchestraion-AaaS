@@ -1,13 +1,16 @@
 """Shared request dependencies: who is calling, and what they own."""
 import asyncio
+import uuid
 
 from fastapi import Depends, Header
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import not_found
 from app.core.security import Claims, unauthorized, uses_shared_secret, verify_token
 from app.db.base import get_db
-from app.db.models import User
+from app.db.models import Agent, User
 
 
 async def get_claims(authorization: str | None = Header(default=None)) -> Claims:
@@ -30,3 +33,12 @@ async def get_current_user(claims: Claims = Depends(get_claims), db: AsyncSessio
         await db.commit()
         user = await db.get(User, claims.sub)
     return user
+
+
+async def get_owned_agent(
+    agent_id: uuid.UUID, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> Agent:
+    agent = await db.scalar(select(Agent).where(Agent.id == agent_id, Agent.user_id == user.id))
+    if agent is None:
+        raise not_found()
+    return agent
