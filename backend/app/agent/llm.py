@@ -3,6 +3,8 @@ import uuid
 from collections.abc import Awaitable, Callable
 
 import httpx
+from langchain.chat_models import init_chat_model
+from langchain_core.language_models.chat_models import BaseChatModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -35,3 +37,21 @@ def get_key_validator() -> KeyValidator:
 async def get_user_api_key(db: AsyncSession, user_id: uuid.UUID, provider: str) -> str | None:
     row = await db.scalar(select(LlmKey).where(LlmKey.user_id == user_id, LlmKey.provider == provider))
     return decrypt_key(row.encrypted_key) if row else None
+
+
+ModelFactory = Callable[[str, str, str], BaseChatModel]
+
+_LANGCHAIN_PROVIDER = {"gemini": "google_genai", "openai": "openai"}
+
+
+def build_chat_model(provider: str, model: str, api_key: str) -> BaseChatModel:
+    """The chat model for one reply, using the user's own key.
+
+    The key is passed only as an argument (LangChain keeps it as a masked secret), never
+    through the environment, so it cannot leak into logs or LangSmith traces.
+    """
+    return init_chat_model(model, model_provider=_LANGCHAIN_PROVIDER[provider], api_key=api_key, timeout=60)
+
+
+def get_model_factory() -> ModelFactory:
+    return build_chat_model

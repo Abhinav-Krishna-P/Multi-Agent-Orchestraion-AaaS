@@ -68,3 +68,38 @@ class AgentUpdate(BaseModel):
     system_prompt: SystemPrompt | None = None
     llm_provider: str | None = None
     llm_model: str | None = None
+
+
+class SessionOut(_FromRow):
+    id: uuid.UUID
+    agent_id: uuid.UUID
+    title: str
+    summary: str | None
+    created_at: datetime
+    last_message_at: datetime
+
+
+class SessionAgentOut(_FromRow):
+    id: uuid.UUID
+    name: str
+    status: str
+    llm_provider: str | None
+    llm_model: str | None
+
+
+class SessionDetailOut(SessionOut):
+    agent: SessionAgentOut
+
+
+class MessageOut(_FromRow):
+    id: uuid.UUID
+    role: str
+    content: str
+    created_at: datetime
+
+
+class ChatIn(BaseModel):
+    """Either a new message, or a request to answer the last unanswered one again."""
+
+    message: str | None = None
+    retry: bool = False
