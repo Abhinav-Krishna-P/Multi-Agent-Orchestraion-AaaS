@@ -6,7 +6,6 @@ generated so far; a reply that fails keeps nothing, so the user can retry.
 import asyncio
 import json
 import logging
-import time
 import uuid
 from collections.abc import AsyncIterator, Coroutine
 
@@ -22,26 +21,24 @@ logger = logging.getLogger(__name__)
 
 MODEL_ERROR_MESSAGE = "The model couldn't reply. Check your API key and try again."
 
-# A reply still marked as running after this long is treated as abandoned, so a request
-# that died before its stream started can never lock a chat for good.
-REPLY_TIMEOUT_SECONDS = 300
-
-_in_flight: dict[uuid.UUID, float] = {}
+_in_flight: set[uuid.UUID] = set()
 _background: set[asyncio.Task] = set()
 
 
 def try_begin(session_id: uuid.UUID) -> bool:
-    """Claims the chat for one reply. False if another reply is already running."""
-    now = time.monotonic()
-    started = _in_flight.get(session_id)
-    if started is not None and now - started < REPLY_TIMEOUT_SECONDS:
+    """Claims the chat for one reply. False if another reply is already running.
+
+    Whoever claims must call end() exactly once. The chat endpoint does it when its
+    response finishes, however it finishes (see TurnResponse).
+    """
+    if session_id in _in_flight:
         return False
-    _in_flight[session_id] = now
+    _in_flight.add(session_id)
     return True
 
 
 def end(session_id: uuid.UUID) -> None:
-    _in_flight.pop(session_id, None)
+    _in_flight.discard(session_id)
 
 
 def _spawn(coro: Coroutine) -> None:
@@ -115,9 +112,8 @@ def _failure_events() -> list[str]:
     ]
 
 
-async def failed_turn(session_id: uuid.UUID) -> AsyncIterator[str]:
+async def failed_turn() -> AsyncIterator[str]:
     """The stream for a reply that could not even start (the model could not be set up)."""
-    end(session_id)
     for event in _failure_events():
         yield event
 
@@ -125,7 +121,7 @@ async def failed_turn(session_id: uuid.UUID) -> AsyncIterator[str]:
 async def run_turn(
     *, session_id: uuid.UUID, system_prompt: str, summary: str | None, model: BaseChatModel
 ) -> AsyncIterator[str]:
-    """Answers the chat's last user message. The caller has already called try_begin()."""
+    """Answers the chat's last user message. The caller holds the chat's claim (try_begin)."""
     parts: list[str] = []
     settled = False  # the reply was saved, or its failure was reported
     try:
@@ -153,7 +149,6 @@ async def run_turn(
         for event in _failure_events():
             yield event
     finally:
-        end(session_id)
         if not settled and parts:
             # Stopped by the user or the connection dropped: keep what was written.
             _spawn(_save_partial_reply(session_id, "".join(parts)))

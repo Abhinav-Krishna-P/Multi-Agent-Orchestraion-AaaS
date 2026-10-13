@@ -340,17 +340,41 @@ async def test_second_send_while_replying_409(client, user_a, live_chat, use_mod
     assert (await send(client, user_a, session["id"], {"message": "Hi"})).status_code == 200
 
 
-def test_try_begin_refuses_second_and_expires(monkeypatch):
+def test_try_begin_refuses_a_second_reply_until_the_first_ends():
     from app.agent import runner
 
     session_id = uuid.uuid4()
-    clock = [1000.0]
-    monkeypatch.setattr(runner.time, "monotonic", lambda: clock[0])
     assert runner.try_begin(session_id) is True
     assert runner.try_begin(session_id) is False
-    clock[0] += runner.REPLY_TIMEOUT_SECONDS + 1
+    runner.end(session_id)
     assert runner.try_begin(session_id) is True
     runner.end(session_id)
+
+
+async def test_claim_released_when_stream_never_starts():
+    """The client vanishes before the first byte: the reply generator is never run,
+    and the chat must still be free for the next message."""
+    from app.agent import runner
+    from app.api.chat import TurnResponse
+
+    session_id = uuid.uuid4()
+    assert runner.try_begin(session_id)
+    started = []
+
+    async def events():
+        started.append(True)
+        yield "never sent"
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        raise OSError("client went away")
+
+    response = TurnResponse(events(), session_id)
+    with pytest.raises(Exception):
+        await response({"type": "http", "asgi": {"spec_version": "2.4"}}, receive, send)
+    assert started == []
     assert runner.try_begin(session_id) is True
     runner.end(session_id)
 
@@ -374,7 +398,6 @@ async def _start_turn(db, session, model):
     session_id = uuid.UUID(session["id"])
     db.add(Message(session_id=session_id, role="user", content="Hi"))
     await db.commit()
-    assert runner.try_begin(session_id)
     return session_id, runner.run_turn(session_id=session_id, system_prompt="P", summary=None, model=model)
 
 
@@ -389,8 +412,6 @@ async def test_closing_the_stream_saves_partial_reply(live_chat, db):
     await turn.aclose()
     await runner.wait_for_background()
     assert await stored(db, session["id"]) == [("user", "Hi"), ("assistant", "Partial")]
-    assert runner.try_begin(session_id) is True
-    runner.end(session_id)
 
 
 async def test_cancelled_request_saves_partial_reply(live_chat, db):
@@ -412,8 +433,6 @@ async def test_cancelled_request_saves_partial_reply(live_chat, db):
         await task
     await runner.wait_for_background()
     assert await stored(db, session["id"]) == [("user", "Hi"), ("assistant", "Partial")]
-    assert runner.try_begin(session_id) is True
-    runner.end(session_id)
 
 
 async def test_stopping_before_any_text_saves_nothing(live_chat, db):
@@ -433,8 +452,6 @@ async def test_stopping_before_any_text_saves_nothing(live_chat, db):
         await task
     await runner.wait_for_background()
     assert await stored(db, session["id"]) == [("user", "Hi")]
-    assert runner.try_begin(session_id) is True
-    runner.end(session_id)
 
 
 # --- building the real model object ---------------------------------------------------

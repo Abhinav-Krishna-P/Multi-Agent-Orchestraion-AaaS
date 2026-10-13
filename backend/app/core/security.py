@@ -9,6 +9,7 @@ from app.core.config import get_settings
 from app.core.errors import ApiError
 
 AUDIENCE = "authenticated"
+REQUIRED_CLAIMS = {"require": ["exp", "sub"]}
 
 
 @dataclass(frozen=True)
@@ -43,10 +44,14 @@ def verify_token(token: str) -> Claims:
     settings = get_settings()
     try:
         if settings.supabase_jwt_secret:
-            payload = jwt.decode(token, settings.supabase_jwt_secret, algorithms=["HS256"], audience=AUDIENCE)
+            payload = jwt.decode(
+                token, settings.supabase_jwt_secret, algorithms=["HS256"], audience=AUDIENCE, options=REQUIRED_CLAIMS
+            )
         else:
             signing_key = _jwks_client(settings.supabase_url).get_signing_key_from_jwt(token).key
-            payload = jwt.decode(token, signing_key, algorithms=["ES256", "RS256"], audience=AUDIENCE)
+            payload = jwt.decode(
+                token, signing_key, algorithms=["ES256", "RS256"], audience=AUDIENCE, options=REQUIRED_CLAIMS
+            )
         metadata = payload.get("user_metadata") or {}
         return Claims(
             sub=uuid.UUID(payload["sub"]),
@@ -54,5 +59,9 @@ def verify_token(token: str) -> Claims:
             name=metadata.get("full_name") or metadata.get("name"),
             avatar_url=metadata.get("avatar_url") or metadata.get("picture"),
         )
+    except jwt.PyJWKClientConnectionError as exc:
+        # Supabase's key server could not be reached. The token may be fine, so this must
+        # not look like an expired session (the frontend signs the user out on a 401).
+        raise ApiError(503, "auth_unavailable", "We couldn't check your sign-in. Try again in a moment.") from exc
     except Exception as exc:
         raise unauthorized() from exc

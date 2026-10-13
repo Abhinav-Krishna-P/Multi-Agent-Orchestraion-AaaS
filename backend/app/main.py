@@ -10,6 +10,8 @@ from app.core.errors import ApiError, api_error_handler
 def create_app() -> FastAPI:
     export_tracing_env()
     settings = get_settings()
+    if not settings.supabase_url and not settings.supabase_jwt_secret:
+        raise RuntimeError("Set SUPABASE_URL (or SUPABASE_JWT_SECRET) in backend/.env: sign-in tokens can't be checked.")
     app = FastAPI(title="Custom Agent Platform")
     app.add_middleware(
         CORSMiddleware,

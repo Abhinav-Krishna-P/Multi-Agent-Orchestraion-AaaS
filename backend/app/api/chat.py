@@ -1,3 +1,5 @@
+import uuid
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
@@ -32,10 +34,24 @@ def _new_message_text(body: ChatIn) -> str | None:
     return text
 
 
-def _stream(events) -> StreamingResponse:
-    return StreamingResponse(
-        events, media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
-    )
+class TurnResponse(StreamingResponse):
+    """Streams one reply and releases the chat's claim when the response ends.
+
+    Releasing here, not inside the reply generator, covers the case where the client
+    disconnects before the first byte: the generator is then never run at all.
+    """
+
+    def __init__(self, events, session_id: uuid.UUID):
+        super().__init__(
+            events, media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+        )
+        self._session_id = session_id
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            runner.end(self._session_id)
 
 
 @router.post("/sessions/{session_id}/chat")
@@ -72,7 +88,7 @@ async def chat(
             if session.title == DEFAULT_TITLE:
                 session.title = " ".join(text.split())[:TITLE_LENGTH]
             await db.commit()
-        # Read everything the stream needs now: the request's database session closes before it runs.
+        # Read everything the stream needs now; the stream uses its own database sessions.
         turn = {"session_id": session.id, "system_prompt": agent.system_prompt, "summary": session.summary}
         provider, model_id = agent.llm_provider, agent.llm_model
     except BaseException:
@@ -83,5 +99,5 @@ async def chat(
         model = build_model(provider, model_id, api_key)
     except Exception as exc:
         runner.logger.warning("A model could not be set up: %s", type(exc).__name__)
-        return _stream(runner.failed_turn(session.id))
-    return _stream(runner.run_turn(model=model, **turn))
+        return TurnResponse(runner.failed_turn(), session.id)
+    return TurnResponse(runner.run_turn(model=model, **turn), session.id)

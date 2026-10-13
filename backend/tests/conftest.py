@@ -94,7 +94,7 @@ def make_token(
     *,
     secret: str = TEST_JWT_SECRET,
     audience: str = "authenticated",
-    expires_in: int = 3600,
+    expires_in: int | None = 3600,
 ) -> str:
     now = int(time.time())
     payload = {
@@ -102,9 +102,10 @@ def make_token(
         "email": email,
         "aud": audience,
         "iat": now,
-        "exp": now + expires_in,
         "user_metadata": {"full_name": name, "avatar_url": "https://example.com/a.png"},
     }
+    if expires_in is not None:
+        payload["exp"] = now + expires_in
     return jwt.encode(payload, secret, algorithm="HS256")
 
 
