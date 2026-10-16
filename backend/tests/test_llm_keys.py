@@ -74,7 +74,7 @@ async def test_key_is_trimmed_before_saving(client, user_a, valid_keys, db):
 
 
 async def test_invalid_key_rejected(client, user_a, invalid_keys, db):
-    r = await client.put("/llm-keys/openai", json={"api_key": "sk-wrong"}, headers=user_a)
+    r = await client.put("/llm-keys/gemini", json={"api_key": "sk-wrong"}, headers=user_a)
     assert r.status_code == 422
     assert r.json()["detail"]["code"] == "invalid_api_key"
     assert "sk-wrong" not in r.text
@@ -82,7 +82,7 @@ async def test_invalid_key_rejected(client, user_a, invalid_keys, db):
 
 
 async def test_blank_key_rejected(client, user_a, valid_keys, db):
-    r = await client.put("/llm-keys/openai", json={"api_key": "   "}, headers=user_a)
+    r = await client.put("/llm-keys/gemini", json={"api_key": "   "}, headers=user_a)
     assert r.status_code == 422
     assert await _stored_keys(db) == []
 
@@ -111,6 +111,7 @@ async def test_keys_are_per_user(client, user_a, user_b, valid_keys):
 async def test_unknown_provider_404(client, user_a, valid_keys):
     r = await client.put("/llm-keys/claude", json={"api_key": "x-1234"}, headers=user_a)
     assert r.status_code == 404
+    assert (await client.put("/llm-keys/openai", json={"api_key": "sk-1234"}, headers=user_a)).status_code == 404
     assert (await client.delete("/llm-keys/claude", headers=user_a)).status_code == 404
 
 
@@ -129,7 +130,7 @@ async def test_model_catalog(client, user_a):
     r = await client.get("/llm-models", headers=user_a)
     assert r.status_code == 200
     providers = {p["key"]: p for p in r.json()["providers"]}
-    assert set(providers) == {"gemini", "openai"}
+    assert set(providers) == {"gemini"}  # the platform is Gemini-only
     for provider in providers.values():
         assert provider["name"]
         assert len(provider["models"]) >= 1
@@ -140,10 +141,9 @@ def test_is_valid_model():
     from app.core.llm_catalog import CATALOG, is_valid_model
 
     gemini = next(p for p in CATALOG["providers"] if p["key"] == "gemini")
-    openai = next(p for p in CATALOG["providers"] if p["key"] == "openai")
     assert is_valid_model("gemini", gemini["models"][0]["id"])
+    assert not is_valid_model("gemini", "gpt-6.1-sol")
     assert not is_valid_model("openai", gemini["models"][0]["id"])
-    assert not is_valid_model("claude", openai["models"][0]["id"])
 
 
 async def test_llm_endpoints_need_sign_in(client):

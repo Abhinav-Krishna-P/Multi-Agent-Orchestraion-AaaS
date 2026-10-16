@@ -72,6 +72,10 @@ async def update_agent(
         agent.name = body.name
     if "description" in sent and body.description is not None:
         agent.description = body.description
+    if "kb_enabled" in sent and body.kb_enabled is not None:
+        agent.kb_enabled = body.kb_enabled
+    if "search_mode" in sent and body.search_mode is not None:
+        agent.search_mode = body.search_mode
     _apply_behavior(agent, body, sent)
     _apply_model(agent, body, sent)
     await db.commit()

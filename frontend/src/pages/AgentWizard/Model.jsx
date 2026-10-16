@@ -43,8 +43,11 @@ export default function Model({ agent, onNext, onBack, goTo }) {
   }
 
   const providers = catalog.data.providers
-  const selectedProvider = providers.find((p) => p.key === provider)
-  const savedKey = llmKeys.data.find((saved) => saved.provider === provider)
+  // With a single provider on offer there is nothing to choose: use it.
+  const providerKey = provider || (providers.length === 1 ? providers[0].key : '')
+  const selectedProvider = providers.find((p) => p.key === providerKey)
+  const modelId = model || selectedProvider?.models[0].id || ''
+  const savedKey = llmKeys.data.find((saved) => saved.provider === providerKey)
 
   function chooseProvider(key) {
     setProvider(key)
@@ -54,7 +57,7 @@ export default function Model({ agent, onNext, onBack, goTo }) {
 
   function onSubmit(event) {
     event.preventDefault()
-    update.mutate({ id: agent.id, llm_provider: provider, llm_model: model }, { onSuccess: onNext })
+    update.mutate({ id: agent.id, llm_provider: providerKey, llm_model: modelId }, { onSuccess: onNext })
   }
 
   return (
@@ -62,7 +65,7 @@ export default function Model({ agent, onNext, onBack, goTo }) {
       <form id={FORM_ID} onSubmit={onSubmit} className="flex flex-col gap-6">
         <div className="flex flex-col gap-2">
           <Label id="provider-label">Provider</Label>
-          <RadioGroup value={provider} onValueChange={chooseProvider} aria-labelledby="provider-label" className="flex gap-6">
+          <RadioGroup value={providerKey} onValueChange={chooseProvider} aria-labelledby="provider-label" className="flex gap-6">
             {providers.map((p) => (
               <div key={p.key} className="flex items-center gap-2">
                 <RadioGroupItem value={p.key} id={`provider-${p.key}`} />
@@ -77,7 +80,7 @@ export default function Model({ agent, onNext, onBack, goTo }) {
         {selectedProvider && (
           <div className="flex flex-col gap-2">
             <Label htmlFor="agent-model">Model</Label>
-            <Select value={model} onValueChange={setModel}>
+            <Select value={modelId} onValueChange={setModel}>
               <SelectTrigger id="agent-model" className="w-full sm:w-96">
                 <SelectValue placeholder="Choose a model" />
               </SelectTrigger>
@@ -104,8 +107,8 @@ export default function Model({ agent, onNext, onBack, goTo }) {
           ) : (
             <>
               <ApiKeyField
-                key={provider}
-                provider={provider}
+                key={providerKey}
+                provider={providerKey}
                 providerName={selectedProvider.name}
                 savedKey={undefined}
                 showLabel={false}
@@ -123,7 +126,7 @@ export default function Model({ agent, onNext, onBack, goTo }) {
         onBack={onBack}
         saving={update.isPending}
         error={update.error?.message}
-        continueDisabled={!provider || !model}
+        continueDisabled={!providerKey || !modelId}
       >
         <Button type="button" variant="link" onClick={() => goTo('deploy')} disabled={update.isPending}>
           Skip for now

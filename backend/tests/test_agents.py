@@ -3,7 +3,6 @@ import pytest
 from tests.conftest import new_id
 
 GEMINI_MODEL = "gemini-3.8-flash"
-OPENAI_MODEL = "gpt-6.1-sol"
 
 
 async def create_agent(client, headers, name="Support Bot", description="Answers questions") -> dict:

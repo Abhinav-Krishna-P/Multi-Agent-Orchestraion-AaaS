@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     Text,
     UniqueConstraint,
     func,
@@ -79,6 +80,67 @@ class Agent(Base):
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
+    tool_rows: Mapped[list["AgentTool"]] = relationship(lazy="selectin", cascade="all, delete-orphan")
+
+    @property
+    def tools(self) -> list[str]:
+        """Names of the registry tools switched on for this agent."""
+        return sorted(row.tool_name for row in self.tool_rows)
+
+
+class AgentTool(Base):
+    """One registry tool switched on for one agent."""
+
+    __tablename__ = "agent_tools"
+    __table_args__ = (UniqueConstraint("agent_id", "tool_name", name="uq_agent_tools_agent_tool"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    tool_name: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = _created_at()
+
+
+class Document(Base):
+    """One document in an agent's knowledge base. Its text lives in document_chunks, its vectors in Chroma."""
+
+    __tablename__ = "documents"
+    __table_args__ = (
+        CheckConstraint("source_type in ('pdf', 'txt', 'paste')", name="ck_documents_source_type"),
+        CheckConstraint("status in ('pending', 'processing', 'ready', 'failed')", name="ck_documents_status"),
+        UniqueConstraint("agent_id", "content_hash", name="uq_documents_agent_hash"),
+        Index("ix_documents_agent_id", "agent_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    filename: Mapped[str] = mapped_column(Text, nullable=False)
+    source_type: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="pending", server_default="pending")
+    error: Mapped[str | None] = mapped_column(Text)
+    content_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # Recorded so vectors from different models or methods are never mixed up later.
+    embedding_model: Mapped[str] = mapped_column(Text, nullable=False)
+    chunking_method: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = _created_at()
+
+
+class DocumentChunk(Base):
+    __tablename__ = "document_chunks"
+    __table_args__ = (Index("ix_document_chunks_agent_id", "agent_id"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=False)
+    agent_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    # `content` is the text that is searched. `context` is what the model is given
+    # instead, when it differs (parent-child chunking); null means use `content`.
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    context: Mapped[str | None] = mapped_column(Text)
+    page: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = _created_at()
+
 
 class ChatSession(Base):
     """One conversation between a user and one agent. Table name: sessions."""
@@ -111,8 +173,10 @@ class Message(Base):
     session_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
     role: Mapped[str] = mapped_column(Text, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    # Unused until tools arrive in stage 2.
-    tool_calls: Mapped[dict | None] = mapped_column(JSONB)
+    # For assistant rows: the tools that ran, as [{label, ok}], and the sources shown,
+    # as [{document_name, page, excerpt}].
+    tool_calls: Mapped[list | None] = mapped_column(JSONB)
+    sources: Mapped[list | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.clock_timestamp(), nullable=False
     )

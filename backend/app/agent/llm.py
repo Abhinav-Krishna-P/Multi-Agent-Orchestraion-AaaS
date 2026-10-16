@@ -16,7 +16,6 @@ KeyValidator = Callable[[str, str], Awaitable[bool]]
 # Read-only "list models" requests: they prove a key works without spending tokens.
 _CHECKS = {
     "gemini": ("https://generativelanguage.googleapis.com/v1beta/models", "x-goog-api-key", "{key}"),
-    "openai": ("https://api.openai.com/v1/models", "Authorization", "Bearer {key}"),
 }
 
 
@@ -41,7 +40,7 @@ async def get_user_api_key(db: AsyncSession, user_id: uuid.UUID, provider: str) 
 
 ModelFactory = Callable[[str, str, str], BaseChatModel]
 
-_LANGCHAIN_PROVIDER = {"gemini": "google_genai", "openai": "openai"}
+_LANGCHAIN_PROVIDER = {"gemini": "google_genai"}
 
 
 def build_chat_model(provider: str, model: str, api_key: str) -> BaseChatModel:

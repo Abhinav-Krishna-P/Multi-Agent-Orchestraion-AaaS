@@ -1,0 +1,25 @@
+API  access to  the project  :
+
+1. Open meteo :  Weather API  (https://open-meteo.com/) ---  API  request URL -  https://api.open-meteo.com/v1/forecast?latitude=52.52&longitude=13.41&past_days=10&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m
+
+2.Google Search Api  : Via  Serp  API  : i can provide the serp  api  key  
+ 
+4.FrankFurter : Currency  exchange rates --  FRANKFURTER_URL: https://api.frankfurter.dev/v2/rates?quotes=usd,gbp  
+
+5.Aviation stack :  Airoplane api   
+
+6.Finnhub : stocks    
+
+7.Google news:  Serper Api  _ i can provide the serper api  key  on  the env 
+
+8.Image search   :   Serper Api  _ i can provide the serper api  key  on  the env 
+
+9.Places :  Serper Api  _ i can provide the serper api  key  on  the env 
+
+10.Shoping product search  : Serper Api  _ i can provide the serper api  key  on  the env 
+
+11.airbnb room search  :    Via  Serp  API  : i can provide the serp  api  key  
+12.google  translate :  Via  Serp  API  : i can provide the serp  api  key  
+
+13.google book api  : Via  Serp  API  : i can provide the serp  api  key  
+14.  Amazon product  search : Via  Serp  API  : i can provide the serp  api  key  

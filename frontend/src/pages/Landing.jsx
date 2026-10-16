@@ -55,8 +55,7 @@ export default function Landing() {
         <div className="max-w-xl">
           <h1 className="text-4xl font-semibold tracking-tight sm:text-5xl">Build your own AI agent</h1>
           <p className="mt-4 text-lg text-muted-foreground">
-            Give it a personality, your documents, tools and app connections. Chat with it using your own Gemini or
-            OpenAI key.
+            Give it a personality, your documents, tools and app connections. Chat with it using your own Gemini key.
           </p>
 
           <Button size="lg" className="mt-8 h-11 px-5 text-base" onClick={signIn} disabled={redirecting || loading}>

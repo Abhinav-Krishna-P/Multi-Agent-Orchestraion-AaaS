@@ -1,7 +1,8 @@
 """The fixed list of providers and models a user can pick for an agent.
 
 Model IDs were checked against the providers' documentation on 2026-11-16.
-For each provider: the cheapest fast model, the balanced one, the most capable one.
+The platform is Gemini-only (owner's decision, 2026-11-17): the cheapest fast model,
+the balanced one, the most capable one. Add a provider here and in app/agent/llm.py to offer another.
 """
 
 CATALOG: dict = {
@@ -13,15 +14,6 @@ CATALOG: dict = {
                 {"id": "gemini-3.5-flash-lite", "name": "Gemini 3.5 Flash Lite (fastest, lowest cost)"},
                 {"id": "gemini-3.8-flash", "name": "Gemini 3.8 Flash (balanced)"},
                 {"id": "gemini-4-argon", "name": "Gemini 4 Argon (most capable)"},
-            ],
-        },
-        {
-            "key": "openai",
-            "name": "OpenAI",
-            "models": [
-                {"id": "gpt-6-luna", "name": "GPT-6 Luna (fastest, lowest cost)"},
-                {"id": "gpt-6.1-sol", "name": "GPT-6.1 Sol (balanced)"},
-                {"id": "gpt-6-astra", "name": "GPT-6 Astra (most capable)"},
             ],
         },
     ]

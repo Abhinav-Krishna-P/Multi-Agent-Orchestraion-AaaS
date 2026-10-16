@@ -2,7 +2,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import agents, chat, llm_keys, me, personas, sessions
+from app.api import agents, chat, llm_keys, me, personas, sessions, tools
 from app.core.config import export_tracing_env, get_settings
 from app.core.errors import ApiError, api_error_handler
 
@@ -25,7 +25,7 @@ def create_app() -> FastAPI:
     async def health() -> dict:
         return {"status": "ok"}
 
-    for module in (me, llm_keys, personas, agents, sessions, chat):
+    for module in (me, llm_keys, personas, agents, sessions, chat, tools):
         app.include_router(module.router)
 
     return app

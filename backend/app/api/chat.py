@@ -14,6 +14,7 @@ from app.core.errors import ApiError
 from app.core.llm_catalog import provider_name
 from app.db.base import get_db
 from app.db.models import ChatSession, Message
+from app.tools.registry import REGISTRY
 
 router = APIRouter()
 
@@ -89,7 +90,14 @@ async def chat(
                 session.title = " ".join(text.split())[:TITLE_LENGTH]
             await db.commit()
         # Read everything the stream needs now; the stream uses its own database sessions.
-        turn = {"session_id": session.id, "system_prompt": agent.system_prompt, "summary": session.summary}
+        specs = [REGISTRY[name] for name in agent.tools if name in REGISTRY]
+        turn = {
+            "session_id": session.id,
+            "system_prompt": agent.system_prompt,
+            "summary": session.summary,
+            "tools": [spec.tool for spec in specs],
+            "labels": {spec.name: spec.activity for spec in specs},
+        }
         provider, model_id = agent.llm_provider, agent.llm_model
     except BaseException:
         runner.end(session.id)

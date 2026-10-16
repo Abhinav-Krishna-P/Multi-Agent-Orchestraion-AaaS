@@ -12,15 +12,21 @@ class _Row(Protocol):
     content: str
 
 
-def build_messages(system_prompt: str, summary: str | None, history: Sequence[_Row]) -> list[BaseMessage]:
+def build_messages(
+    system_prompt: str, summary: str | None, history: Sequence[_Row], extra_instruction: str | None = None
+) -> list[BaseMessage]:
     """`history` is the chat's most recent rows, oldest first, ending with the user message to answer.
 
     Leading assistant rows are dropped: the window can start mid-exchange, and providers
     expect the first message after the system prompt to come from the user.
+    `extra_instruction` is a platform rule added for this reply only (it is never saved
+    into the agent's own prompt).
     """
     system = system_prompt
     if summary:
         system = f"{system_prompt}\n\nSummary of the conversation so far:\n{summary}"
+    if extra_instruction:
+        system = f"{system}\n\n{extra_instruction}"
     rows = list(history)
     while rows and rows[0].role != "user":
         rows.pop(0)

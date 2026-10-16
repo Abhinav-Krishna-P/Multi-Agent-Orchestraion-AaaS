@@ -7,13 +7,15 @@ import asyncio
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterator, Coroutine
+from collections.abc import AsyncIterator, Coroutine, Sequence
 
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import AIMessageChunk, ToolMessage
+from langchain_core.tools import BaseTool
 from sqlalchemy import func, select, update
 
 from app.agent.context import HISTORY_LIMIT, build_messages
-from app.agent.graph import AGENT_NODE, build_graph
+from app.agent.graph import AGENT_NODE, MAX_TOOL_ROUNDS, RECURSION_LIMIT, TOOLS_NODE, build_graph
 from app.db.base import session_factory
 from app.db.models import ChatSession, Message
 
@@ -83,18 +85,20 @@ async def _recent_history(session_id: uuid.UUID) -> list[Message]:
         return list(reversed(rows.all()))
 
 
-async def _save_reply(session_id: uuid.UUID, text: str) -> uuid.UUID:
+async def _save_reply(session_id: uuid.UUID, text: str, tools: list[dict], sources: list[dict]) -> uuid.UUID:
     async with session_factory() as db:
-        message = Message(session_id=session_id, role="assistant", content=text)
+        message = Message(
+            session_id=session_id, role="assistant", content=text, tool_calls=tools or None, sources=sources or None
+        )
         db.add(message)
         await db.execute(update(ChatSession).where(ChatSession.id == session_id).values(last_message_at=func.now()))
         await db.commit()
         return message.id
 
 
-async def _save_partial_reply(session_id: uuid.UUID, text: str) -> None:
+async def _save_partial_reply(session_id: uuid.UUID, text: str, tools: list[dict], sources: list[dict]) -> None:
     try:
-        await _save_reply(session_id, text)
+        await _save_reply(session_id, text, tools, sources)
     except Exception as exc:  # the chat may have been deleted meanwhile
         logger.warning("Could not save a stopped reply: %s", type(exc).__name__)
 
@@ -119,28 +123,73 @@ async def failed_turn() -> AsyncIterator[str]:
 
 
 async def run_turn(
-    *, session_id: uuid.UUID, system_prompt: str, summary: str | None, model: BaseChatModel
+    *,
+    session_id: uuid.UUID,
+    system_prompt: str,
+    summary: str | None,
+    model: BaseChatModel,
+    tools: Sequence[BaseTool] = (),
+    labels: dict[str, str] | None = None,
+    extra_instruction: str | None = None,
 ) -> AsyncIterator[str]:
-    """Answers the chat's last user message. The caller holds the chat's claim (try_begin)."""
+    """Answers the chat's last user message. The caller holds the chat's claim (try_begin).
+
+    `labels` maps a tool's name to the words shown in chat while it runs. A tool result may
+    carry sources (its `artifact`); they are sent once, just before the reply is done.
+    """
+    labels = labels or {}
     parts: list[str] = []
+    used: dict[str, dict] = {}  # tool call id -> {label, ok}, in the order the model asked
+    sources: list[dict] = []
+    rounds = 0
     settled = False  # the reply was saved, or its failure was reported
     try:
         history = await _recent_history(session_id)
-        graph = build_graph(model)
-        stream = graph.astream({"messages": build_messages(system_prompt, summary, history)}, stream_mode="messages")
-        async for chunk, metadata in stream:
-            if metadata.get("langgraph_node") != AGENT_NODE:
+        graph = build_graph(model, tools)
+        stream = graph.astream(
+            {"messages": build_messages(system_prompt, summary, history, extra_instruction)},
+            stream_mode=["messages", "updates"],
+            config={"recursion_limit": RECURSION_LIMIT},
+        )
+        async for mode, payload in stream:
+            if mode == "messages":
+                chunk, metadata = payload
+                if metadata.get("langgraph_node") == AGENT_NODE and isinstance(chunk, AIMessageChunk):
+                    piece = chunk_text(chunk)
+                    if piece:
+                        parts.append(piece)
+                        yield sse("token", {"text": piece})
                 continue
-            piece = chunk_text(chunk)
-            if piece:
-                parts.append(piece)
-                yield sse("token", {"text": piece})
+            for node, update_ in payload.items():
+                messages = (update_ or {}).get("messages", [])
+                if node == AGENT_NODE:
+                    tool_calls = getattr(messages[-1], "tool_calls", None) or []
+                    if tool_calls:
+                        rounds += 1
+                        if rounds > MAX_TOOL_ROUNDS:
+                            raise RuntimeError("too many tool rounds")
+                    for tool_call in tool_calls:
+                        label = labels.get(tool_call["name"], tool_call["name"])
+                        used[tool_call["id"]] = {"label": label, "ok": True}
+                        yield sse("tool_start", {"id": tool_call["id"], "label": label})
+                elif node == TOOLS_NODE:
+                    for message in messages:
+                        if not isinstance(message, ToolMessage):
+                            continue
+                        ok = message.status != "error"
+                        if message.tool_call_id in used:
+                            used[message.tool_call_id]["ok"] = ok
+                        if isinstance(message.artifact, list):
+                            sources.extend(message.artifact)
+                        yield sse("tool_end", {"id": message.tool_call_id, "ok": ok})
         text = "".join(parts)
         if not text:
             raise RuntimeError("empty reply")
-        message_id = await _save_reply(session_id, text)
+        message_id = await _save_reply(session_id, text, list(used.values()), sources)
         settled = True
         _spawn(_update_summary(session_id))
+        if sources:
+            yield sse("sources", {"sources": sources})
         yield sse("done", {"message_id": str(message_id)})
     except Exception as exc:
         # Only the exception type is logged: provider errors can carry request details.
@@ -151,4 +200,4 @@ async def run_turn(
     finally:
         if not settled and parts:
             # Stopped by the user or the connection dropped: keep what was written.
-            _spawn(_save_partial_reply(session_id, "".join(parts)))
+            _spawn(_save_partial_reply(session_id, "".join(parts), list(used.values()), sources))

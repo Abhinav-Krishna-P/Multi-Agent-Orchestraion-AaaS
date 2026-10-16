@@ -2,9 +2,9 @@
 import uuid
 from datetime import datetime
 
-from typing import Annotated
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 
 class _FromRow(BaseModel):
@@ -49,6 +49,9 @@ class AgentOut(_FromRow):
     system_prompt: str
     llm_provider: str | None
     llm_model: str | None
+    kb_enabled: bool
+    search_mode: str
+    tools: list[str]
     status: str
     created_at: datetime
     updated_at: datetime
@@ -68,6 +71,12 @@ class AgentUpdate(BaseModel):
     system_prompt: SystemPrompt | None = None
     llm_provider: str | None = None
     llm_model: str | None = None
+    kb_enabled: bool | None = None
+    search_mode: Literal["semantic", "keyword", "hybrid"] | None = None
+
+
+class AgentToolsIn(BaseModel):
+    tools: list[str]
 
 
 class SessionOut(_FromRow):
@@ -96,6 +105,14 @@ class MessageOut(_FromRow):
     role: str
     content: str
     created_at: datetime
+    # Stored on the row as tool_calls / sources; null there means none.
+    tools: list[dict] = Field(default_factory=list, validation_alias="tool_calls")
+    sources: list[dict] = Field(default_factory=list)
+
+    @field_validator("tools", "sources", mode="before")
+    @classmethod
+    def _none_is_empty(cls, value):
+        return value or []
 
 
 class ChatIn(BaseModel):

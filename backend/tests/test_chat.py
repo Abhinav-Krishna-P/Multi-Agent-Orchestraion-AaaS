@@ -210,18 +210,6 @@ async def test_no_key_409(client, user_a, live_chat, use_model, db):
     assert await stored(db, session["id"]) == []
 
 
-async def test_key_for_other_provider_does_not_count(client, user_a, live_chat, use_model):
-    agent, session = live_chat
-    use_model(scripted(["never used"]))
-    await client.patch(
-        f"/agents/{agent['id']}", json={"llm_provider": "openai", "llm_model": "gpt-6.1-sol"}, headers=user_a
-    )
-    r = await send(client, user_a, session["id"], {"message": "Hi"})
-    assert r.status_code == 409
-    assert r.json()["detail"]["code"] == "missing_api_key"
-    assert "OpenAI" in r.json()["detail"]["message"]
-
-
 async def test_deleted_agent_404(client, user_a, live_chat, use_model):
     agent, session = live_chat
     use_model(scripted(["never used"]))
@@ -459,7 +447,7 @@ async def test_stopping_before_any_text_saves_nothing(live_chat, db):
 
 @pytest.mark.parametrize(
     "provider, model_id, class_name",
-    [("gemini", GEMINI_MODEL, "ChatGoogleGenerativeAI"), ("openai", "gpt-6.1-sol", "ChatOpenAI")],
+    [("gemini", GEMINI_MODEL, "ChatGoogleGenerativeAI")],
 )
 def test_build_chat_model_hides_the_key(provider, model_id, class_name):
     from app.agent.llm import build_chat_model

@@ -27,6 +27,11 @@ class Settings(BaseSettings):
 
     frontend_origin: str = "http://localhost:5173"
 
+    # Knowledge base
+    chroma_url: str = ""
+    embedding_model: str = "gemini-embedding-2"
+    chunking_method: str = "recursive"  # or "parent_child"; chosen by the LangSmith comparison
+
 
 @lru_cache
 def get_settings() -> Settings:
