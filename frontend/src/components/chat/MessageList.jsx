@@ -9,7 +9,16 @@ const STICK_THRESHOLD = 80
  * The scrolling list of messages. It follows new text to the bottom unless the
  * user has scrolled up to read something earlier.
  */
-export function MessageList({ messages, streamingText, isStreaming, error, onRetry, emptyHint }) {
+export function MessageList({
+  messages,
+  streamingText,
+  streamingTools,
+  streamingSources,
+  isStreaming,
+  error,
+  onRetry,
+  emptyHint,
+}) {
   const containerRef = useRef(null)
   const stickRef = useRef(true)
 
@@ -21,7 +30,7 @@ export function MessageList({ messages, streamingText, isStreaming, error, onRet
   useEffect(() => {
     const el = containerRef.current
     if (el && stickRef.current) el.scrollTop = el.scrollHeight
-  }, [messages, streamingText, isStreaming, error])
+  }, [messages, streamingText, streamingTools, streamingSources, isStreaming, error])
 
   const empty = messages.length === 0 && !isStreaming
 
@@ -34,9 +43,23 @@ export function MessageList({ messages, streamingText, isStreaming, error, onRet
       ) : (
         <div className="mx-auto flex max-w-3xl flex-col gap-4 p-4" aria-live="polite">
           {messages.map((message) => (
-            <Message key={message.id} role={message.role} content={message.content} />
+            <Message
+              key={message.id}
+              role={message.role}
+              content={message.content}
+              tools={message.tools}
+              sources={message.sources}
+            />
           ))}
-          {isStreaming && <Message role="assistant" content={streamingText} streaming />}
+          {isStreaming && (
+            <Message
+              role="assistant"
+              content={streamingText}
+              tools={streamingTools}
+              sources={streamingSources}
+              streaming
+            />
+          )}
           {error && (
             <div role="alert" className="flex flex-wrap items-center gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm">
               <span className="flex-1 text-destructive">{error.message}</span>

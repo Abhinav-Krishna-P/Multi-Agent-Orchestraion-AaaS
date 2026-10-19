@@ -128,7 +128,7 @@ export default function Model({ agent, onNext, onBack, goTo }) {
         error={update.error?.message}
         continueDisabled={!providerKey || !modelId}
       >
-        <Button type="button" variant="link" onClick={() => goTo('deploy')} disabled={update.isPending}>
+        <Button type="button" variant="link" onClick={() => goTo('knowledge')} disabled={update.isPending}>
           Skip for now
         </Button>
       </StepFooter>

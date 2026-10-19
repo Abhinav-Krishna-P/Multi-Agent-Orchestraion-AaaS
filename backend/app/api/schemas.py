@@ -120,3 +120,13 @@ class ChatIn(BaseModel):
 
     message: str | None = None
     retry: bool = False
+
+
+class DocumentOut(_FromRow):
+    id: uuid.UUID
+    filename: str
+    source_type: str
+    status: str
+    error: str | None
+    chunk_count: int
+    created_at: datetime

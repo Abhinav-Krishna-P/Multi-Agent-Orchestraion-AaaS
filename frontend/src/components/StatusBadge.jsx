@@ -6,6 +6,11 @@ const STATUSES = {
   live: { label: 'Live', className: 'border-green-200 bg-green-50 text-green-800' },
   draft: { label: 'Draft', className: 'border-amber-200 bg-amber-50 text-amber-800' },
   stopped: { label: 'Stopped', className: 'border-neutral-200 bg-neutral-100 text-neutral-700' },
+  // Documents in a knowledge base
+  pending: { label: 'Pending', className: 'border-amber-200 bg-amber-50 text-amber-800' },
+  processing: { label: 'Processing', className: 'border-amber-200 bg-amber-50 text-amber-800' },
+  ready: { label: 'Ready', className: 'border-green-200 bg-green-50 text-green-800' },
+  failed: { label: 'Failed', className: 'border-red-200 bg-red-50 text-red-800' },
 }
 
 export function StatusBadge({ status, className }) {

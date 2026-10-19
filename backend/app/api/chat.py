@@ -14,6 +14,10 @@ from app.core.errors import ApiError
 from app.core.llm_catalog import provider_name
 from app.db.base import get_db
 from app.db.models import ChatSession, Message
+from app.rag.embeddings import Embedder, get_embedder
+from app.rag.retrieve import document_names
+from app.rag.vector_store import VectorStore, get_vector_store
+from app.tools import knowledge_base
 from app.tools.registry import REGISTRY
 
 router = APIRouter()
@@ -61,6 +65,8 @@ async def chat(
     session: ChatSession = Depends(get_owned_session),
     db: AsyncSession = Depends(get_db),
     build_model: ModelFactory = Depends(get_model_factory),
+    embedder: Embedder = Depends(get_embedder),
+    store: VectorStore = Depends(get_vector_store),
 ):
     text = _new_message_text(body)
     agent = session.agent
@@ -98,6 +104,12 @@ async def chat(
             "tools": [spec.tool for spec in specs],
             "labels": {spec.name: spec.activity for spec in specs},
         }
+        # The knowledge-base tools exist only while there is something to search.
+        ready_documents = await document_names(db, agent.id) if agent.kb_enabled else []
+        if ready_documents:
+            turn["tools"] += knowledge_base.build_kb_tools(agent.id, agent.search_mode, embedder=embedder, store=store)
+            turn["labels"] |= knowledge_base.LABELS
+            turn["extra_instruction"] = knowledge_base.kb_instruction(ready_documents)
         provider, model_id = agent.llm_provider, agent.llm_model
     except BaseException:
         runner.end(session.id)

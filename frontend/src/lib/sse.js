@@ -9,7 +9,18 @@ import { API_URL, ApiError, SESSION_EXPIRED_MESSAGE, errorFromResponse, getAcces
  * ApiError if the server refuses the request before streaming starts.
  * Returns { finished: true } only if the server sent its final `done` event.
  */
-export async function streamChat({ sessionId, body, signal, onOpen, onToken, onError, onDone }) {
+export async function streamChat({
+  sessionId,
+  body,
+  signal,
+  onOpen,
+  onToken,
+  onToolStart,
+  onToolEnd,
+  onSources,
+  onError,
+  onDone,
+}) {
   const token = await getAccessToken()
   let finished = false
 
@@ -36,6 +47,9 @@ export async function streamChat({ sessionId, body, signal, onOpen, onToken, onE
       if (!event.data) return
       const data = JSON.parse(event.data)
       if (event.event === 'token') onToken(data.text)
+      else if (event.event === 'tool_start') onToolStart?.(data)
+      else if (event.event === 'tool_end') onToolEnd?.(data)
+      else if (event.event === 'sources') onSources?.(data.sources)
       else if (event.event === 'error') onError(data)
       else if (event.event === 'done') {
         finished = true

@@ -11,6 +11,8 @@ export const keys = {
   sessions: (agentId) => ['sessions', agentId],
   session: (id) => ['session', id],
   messages: (sessionId) => ['messages', sessionId],
+  documents: (agentId) => ['documents', agentId],
+  tools: ['tools'],
 }
 
 // --- LLM keys and models --------------------------------------------------------------
@@ -133,4 +135,43 @@ export function useMessages(sessionId) {
     queryFn: () => api(`/sessions/${sessionId}/messages`),
     enabled: Boolean(sessionId),
   })
+}
+
+// --- Knowledge base and tools -----------------------------------------------------------
+
+const isIndexing = (doc) => doc.status === 'pending' || doc.status === 'processing'
+
+/** An agent's documents. Checks again every 3 seconds while any of them is still being indexed. */
+export function useDocuments(agentId) {
+  return useQuery({
+    queryKey: keys.documents(agentId),
+    queryFn: () => api(`/agents/${agentId}/documents`),
+    enabled: Boolean(agentId),
+    refetchInterval: (query) => (query.state.data?.some(isIndexing) ? 3000 : false),
+  })
+}
+
+/** Takes a FormData holding either `file`, or `title` and `text`. */
+export function useAddDocument(agentId) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (form) => api(`/agents/${agentId}/documents`, { method: 'POST', body: form }),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.documents(agentId) }),
+  })
+}
+
+export function useDeleteDocument(agentId) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (documentId) => api(`/agents/${agentId}/documents/${documentId}`, { method: 'DELETE' }),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.documents(agentId) }),
+  })
+}
+
+export function useToolCatalog() {
+  return useQuery({ queryKey: keys.tools, queryFn: () => api('/tools'), staleTime: Infinity })
+}
+
+export function useSetAgentTools() {
+  return useAgentMutation(({ id, tools }) => api(`/agents/${id}/tools`, { method: 'PUT', body: { tools } }))
 }

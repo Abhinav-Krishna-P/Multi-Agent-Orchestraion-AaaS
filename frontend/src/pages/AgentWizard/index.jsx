@@ -7,13 +7,17 @@ import { cn } from '@/lib/utils'
 import Basics from './Basics'
 import Behavior from './Behavior'
 import Deploy from './Deploy'
+import Knowledge from './Knowledge'
 import Model from './Model'
+import Tools from './Tools'
 
-// The steps are a real sequence, so they are numbered. Later stages add Knowledge, Tools and Apps.
+// The steps are a real sequence, so they are numbered. A later stage adds Apps.
 const STEPS = [
   { key: 'basics', label: 'Basics', Component: Basics },
   { key: 'behavior', label: 'Behavior', Component: Behavior },
   { key: 'model', label: 'Model', Component: Model },
+  { key: 'knowledge', label: 'Knowledge', Component: Knowledge },
+  { key: 'tools', label: 'Tools', Component: Tools },
   { key: 'deploy', label: 'Deploy', Component: Deploy },
 ]
 

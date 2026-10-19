@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.personas import get_persona
@@ -8,7 +8,8 @@ from app.api.schemas import AgentCreate, AgentOut, AgentUpdate
 from app.core.errors import ApiError
 from app.core.llm_catalog import is_valid_model
 from app.db.base import get_db
-from app.db.models import Agent, User
+from app.db.models import Agent, Document, User
+from app.rag.vector_store import VectorStore, VectorStoreUnavailable, get_vector_store
 
 router = APIRouter()
 
@@ -84,7 +85,22 @@ async def update_agent(
 
 
 @router.delete("/agents/{agent_id}", status_code=204)
-async def delete_agent(agent: Agent = Depends(get_owned_agent), db: AsyncSession = Depends(get_db)):
+async def delete_agent(
+    agent: Agent = Depends(get_owned_agent),
+    db: AsyncSession = Depends(get_db),
+    store: VectorStore = Depends(get_vector_store),
+):
+    # Postgres removes the agent's documents and chunks by cascade, but cannot reach Chroma:
+    # remove the vectors first, and delete nothing if that fails.
+    has_documents = await db.scalar(select(func.count()).select_from(Document).where(Document.agent_id == agent.id))
+    if has_documents:
+        try:
+            await store.delete_agent(agent.id)
+        except VectorStoreUnavailable as error:
+            raise ApiError(
+                503, "vector_store_unavailable",
+                "The knowledge base can't be reached right now. Try again in a moment.",
+            ) from error
     await db.delete(agent)
     await db.commit()
     return Response(status_code=204)

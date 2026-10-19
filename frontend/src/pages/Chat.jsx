@@ -69,6 +69,8 @@ function ChatThread({ agent, sessionId, providerName, modelName }) {
   const [draft, setDraft] = useState('')
   const [pendingUserText, setPendingUserText] = useState(null)
   const [streamingText, setStreamingText] = useState('')
+  const [streamingTools, setStreamingTools] = useState([]) // [{ id, label, ok }], ok is null while running
+  const [streamingSources, setStreamingSources] = useState([])
   const [isStreaming, setIsStreaming] = useState(false)
   const [error, setError] = useState(null) // { message }
   const abortRef = useRef(null)
@@ -81,6 +83,8 @@ function ChatThread({ agent, sessionId, providerName, modelName }) {
     openedRef.current = false
     setError(null)
     setStreamingText('')
+    setStreamingTools([])
+    setStreamingSources([])
     setPendingUserText(body.message ?? null)
     setIsStreaming(true)
 
@@ -94,6 +98,10 @@ function ChatThread({ agent, sessionId, providerName, modelName }) {
           openedRef.current = true
         },
         onToken: (text) => setStreamingText((previous) => previous + text),
+        onToolStart: (tool) => setStreamingTools((tools) => [...tools, { ...tool, ok: null }]),
+        onToolEnd: ({ id, ok }) =>
+          setStreamingTools((tools) => tools.map((tool) => (tool.id === id ? { ...tool, ok } : tool))),
+        onSources: setStreamingSources,
         onError: (data) => {
           failure = data
         },
@@ -111,6 +119,8 @@ function ChatThread({ agent, sessionId, providerName, modelName }) {
     ])
     setIsStreaming(false)
     setStreamingText('')
+    setStreamingTools([])
+    setStreamingSources([])
     setPendingUserText(null)
     if (failure) reportFailure(failure, targetSessionId, body)
   }
@@ -263,6 +273,8 @@ function ChatThread({ agent, sessionId, providerName, modelName }) {
         <MessageList
           messages={shownMessages}
           streamingText={streamingText}
+          streamingTools={streamingTools}
+          streamingSources={streamingSources}
           isStreaming={isStreaming}
           error={shownError}
           onRetry={unanswered ? () => runTurn(sessionId, { retry: true }) : null}

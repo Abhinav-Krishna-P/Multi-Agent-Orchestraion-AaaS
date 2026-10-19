@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { useDeployAgent, useLlmKeys, useModelCatalog, usePersonas } from '@/lib/queries'
+import { useDeployAgent, useDocuments, useLlmKeys, useModelCatalog, usePersonas } from '@/lib/queries'
 
 function SummaryRow({ label, onEdit, children }) {
   return (
@@ -26,6 +26,7 @@ export default function Deploy({ agent, onBack, goTo }) {
   const catalog = useModelCatalog()
   const llmKeys = useLlmKeys()
   const deploy = useDeployAgent()
+  const documents = useDocuments(agent.id)
 
   const persona = personas.data?.find((p) => p.key === agent.persona_key)
   const provider = catalog.data?.providers.find((p) => p.key === agent.llm_provider)
@@ -38,6 +39,12 @@ export default function Deploy({ agent, onBack, goTo }) {
   const warnings = []
   if (!agent.llm_provider) warnings.push('Choose a model before chatting.')
   else if (llmKeys.data && !hasKey) warnings.push('Add your API key before chatting.')
+  const documentCount = documents.data?.length ?? 0
+  const indexing = documents.data?.some((doc) => doc.status === 'pending' || doc.status === 'processing')
+  if (agent.kb_enabled && indexing) warnings.push('Some documents are still being indexed.')
+  if (agent.kb_enabled && documents.data && documentCount === 0) {
+    warnings.push('The knowledge base is on but has no documents yet.')
+  }
 
   function deployAgent() {
     deploy.mutate(agent.id, {
@@ -75,6 +82,12 @@ export default function Deploy({ agent, onBack, goTo }) {
           ) : (
             <span className="text-muted-foreground">Not chosen yet</span>
           )}
+        </SummaryRow>
+        <SummaryRow label="Knowledge" onEdit={() => goTo('knowledge')}>
+          {agent.kb_enabled ? `On · ${documentCount} ${documentCount === 1 ? 'document' : 'documents'}` : 'Off'}
+        </SummaryRow>
+        <SummaryRow label="Tools" onEdit={() => goTo('tools')}>
+          {agent.tools.length === 0 ? 'None' : `${agent.tools.length} ${agent.tools.length === 1 ? 'tool' : 'tools'}`}
         </SummaryRow>
       </dl>
 
