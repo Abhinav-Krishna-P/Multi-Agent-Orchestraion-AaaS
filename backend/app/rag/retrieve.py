@@ -23,7 +23,7 @@ TOP_K = 5
 READ_LIMIT = 8
 # Below this best cosine similarity, a search counts as "nothing relevant". Tuned with the
 # LangSmith tests (backend/evals).
-MIN_SIMILARITY = 0.35
+MIN_SIMILARITY = 0.60
 
 
 @dataclass(frozen=True)

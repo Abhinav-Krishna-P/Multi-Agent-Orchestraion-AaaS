@@ -5,6 +5,7 @@ Only vectors and chunk metadata are stored here. Chunk text stays in Postgres.
 import asyncio
 import re
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from typing import Protocol
 from urllib.parse import urlparse
@@ -12,6 +13,10 @@ from urllib.parse import urlparse
 from app.core.config import get_settings
 
 ADD_BATCH = 1000
+TIMEOUT_SECONDS = 15
+# The Chroma client is synchronous and has no timeout of its own. Its calls run on their own
+# few threads, so a stalled server cannot use up the threads the rest of the app shares.
+_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="chroma")
 
 
 class VectorStoreUnavailable(Exception):
@@ -61,10 +66,12 @@ class ChromaVectorStore:
         return self._collection
 
     async def _run(self, work):
-        """The Chroma client is synchronous: run it off the event loop, and turn any failure
-        into one error type the callers know how to report."""
+        """The Chroma client is synchronous: run it off the event loop with a time limit, and
+        turn any failure (including no answer in time) into one error type the callers report."""
+        loop = asyncio.get_running_loop()
         try:
-            return await asyncio.to_thread(lambda: work(self._get_collection()))
+            call = loop.run_in_executor(_EXECUTOR, lambda: work(self._get_collection()))
+            return await asyncio.wait_for(call, TIMEOUT_SECONDS)
         except VectorStoreUnavailable:
             raise
         except Exception as error:

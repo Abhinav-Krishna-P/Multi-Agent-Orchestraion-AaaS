@@ -75,6 +75,8 @@ async def update_agent(
         agent.description = body.description
     if "kb_enabled" in sent and body.kb_enabled is not None:
         agent.kb_enabled = body.kb_enabled
+    if "kb_strict" in sent and body.kb_strict is not None:
+        agent.kb_strict = body.kb_strict
     if "search_mode" in sent and body.search_mode is not None:
         agent.search_mode = body.search_mode
     _apply_behavior(agent, body, sent)

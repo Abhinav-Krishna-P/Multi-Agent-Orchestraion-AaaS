@@ -8,6 +8,13 @@ const REMARK_PLUGINS = [remarkGfm]
 const MARKDOWN_COMPONENTS = {
   // Links in a reply go to other sites: open them in a new tab.
   a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer noopener" />,
+  // Images are never loaded: an address written into a reply (for example by text hidden in
+  // a document) could carry chat content out to another site. They are shown as links.
+  img: ({ node: _node, src, alt }) => (
+    <a href={src} target="_blank" rel="noreferrer noopener">
+      {alt || 'Image'}
+    </a>
+  ),
 }
 
 /**

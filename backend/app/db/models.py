@@ -74,6 +74,8 @@ class Agent(Base):
     # Unused until the knowledge base arrives in stage 2.
     kb_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     search_mode: Mapped[str] = mapped_column(Text, nullable=False, default="hybrid", server_default="hybrid")
+    # True: answer only from the documents. False: documents first, then general knowledge.
+    kb_strict: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     status: Mapped[str] = mapped_column(Text, nullable=False, default="draft", server_default="draft")
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = mapped_column(

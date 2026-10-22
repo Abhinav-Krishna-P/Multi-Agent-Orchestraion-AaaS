@@ -51,6 +51,7 @@ class AgentOut(_FromRow):
     llm_model: str | None
     kb_enabled: bool
     search_mode: str
+    kb_strict: bool
     tools: list[str]
     status: str
     created_at: datetime
@@ -72,6 +73,7 @@ class AgentUpdate(BaseModel):
     llm_provider: str | None = None
     llm_model: str | None = None
     kb_enabled: bool | None = None
+    kb_strict: bool | None = None
     search_mode: Literal["semantic", "keyword", "hybrid"] | None = None
 
 

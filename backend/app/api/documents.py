@@ -1,4 +1,5 @@
 import hashlib
+import re
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Response, UploadFile
@@ -35,8 +36,15 @@ def store_unavailable() -> ApiError:
     )
 
 
+def _clean_name(name: str | None) -> str:
+    """A document's name reaches the model (in its instructions and in the tags wrapped
+    around the document's text), so quotes, angle brackets and line breaks are removed."""
+    name = re.sub(r'[<>"]', "", name or "")
+    return re.sub(r"\s+", " ", name).strip()
+
+
 async def _read_upload(file: UploadFile) -> tuple[str, str, bytes]:
-    name = (file.filename or "").strip()
+    name = _clean_name(file.filename)
     source_type = FILE_TYPES.get(name[-4:].lower())
     if source_type is None:
         raise _invalid("Upload a .pdf or .txt file.")
@@ -49,7 +57,7 @@ async def _read_upload(file: UploadFile) -> tuple[str, str, bytes]:
 
 
 def _read_paste(title: str | None, text: str | None) -> tuple[str, str, bytes]:
-    title, text = (title or "").strip(), (text or "").strip()
+    title, text = _clean_name(title), (text or "").strip()
     if not title:
         raise _invalid("Give the text a title.")
     if len(title) > MAX_TITLE_CHARS:

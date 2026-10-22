@@ -6,7 +6,7 @@ from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
-from pydantic import ValidationError
+from langgraph.prebuilt.tool_node import ToolInvocationError
 
 AGENT_NODE = "agent"
 TOOLS_NODE = "tools"
@@ -18,8 +18,12 @@ RECURSION_LIMIT = 2 * MAX_TOOL_ROUNDS + 5
 def _tool_error(error: Exception) -> str:
     """What the model is told when a tool fails. Argument problems are explained so it can
     retry; anything else stays generic, because exception text can carry internal detail."""
-    if isinstance(error, ValidationError):
-        return f"The tool was called with the wrong arguments: {error.errors(include_url=False, include_input=False)}"
+    if isinstance(error, ToolInvocationError):  # how the tool node reports arguments that don't fit
+        problems = "; ".join(
+            f"{'.'.join(str(part) for part in detail['loc'])}: {detail['msg']}"
+            for detail in error.source.errors(include_url=False, include_input=False)
+        )
+        return f"The tool was called with the wrong arguments ({problems}). Correct them and try again."
     return "The tool failed. Tell the user it could not be used right now."
 
 

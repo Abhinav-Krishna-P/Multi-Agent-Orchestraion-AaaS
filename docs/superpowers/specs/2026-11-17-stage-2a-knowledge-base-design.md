@@ -220,3 +220,27 @@ Asked for by the project owner after approval.
 - **So the model knows what it can filter on,** the reply-time instruction lists the names of the agent's ready documents.
 - An unknown document name returns "There is no document with that name." and the list of names.
 - The LangSmith test set gains a few questions that need a filter or a page lookup.
+
+## 14. Results of the LangSmith tests (2026-11-17)
+
+Run with `python -m evals.run <dataset|chunking|search|answers>` from `backend/`. The experiments are in LangSmith under the dataset `rag-test-docs`.
+
+**Test set:** 28 answerable questions (24 on facts, 4 that name a page) and 5 unanswerable ones (3 near the documents' subject, 2 general knowledge), written from three of the owner's documents: `pdffile.pdf` (ISO/IEC 27001, 26 pages), `textfile.txt` and `test3.txt`. `test2.txt` is an empty file and was skipped.
+
+| Test | Result |
+|---|---|
+| Chunking, recursive (81 chunks) | Right passage in the top 5 for 28 of 28 |
+| Chunking, parent-child (201 chunks) | 28 of 28 |
+| Search, semantic | 28 of 28 |
+| Search, keyword (BM25) | 28 of 28 |
+| Search, hybrid | 28 of 28 |
+| Whole agent, answerable | Correct 28 of 28; supported by the retrieved text 27 of 28 |
+| Whole agent, unanswerable | Declined 5 of 5, including both general-knowledge questions |
+
+**Decisions taken from them**
+
+- **Chunking default: recursive.** The two methods tied, and the design's rule gives a tie to recursive because it sends less text to the model.
+- **Search default: hybrid**, as designed. On this test set all three modes found every passage, so the tests neither confirm nor contradict that hybrid is better.
+- **Similarity cut-off: 0.60.** The best similarity for answerable questions ranged from 0.70 upwards (median 0.79). The two general-knowledge questions scored 0.52 and 0.54, so 0.60 rejects them before the model sees anything. The three unanswerable questions near the documents' subject scored 0.67 to 0.73, which overlaps the answerable range: no cut-off can separate those, and the agent's instruction to answer only from the documents is what makes it decline them (it did, 3 of 3). The plan's rule would have picked 0.70, which drops one real answer; 0.60 was chosen instead because losing a real answer costs more than passing a near-miss to a model that then declines.
+
+**What these results do not show.** The test set is small and came out easy: every method scored the maximum, so it cannot tell the chunking methods or the search modes apart. A larger and harder set (more documents, longer ones, questions whose answer needs two passages) is needed before trusting either choice for real use.

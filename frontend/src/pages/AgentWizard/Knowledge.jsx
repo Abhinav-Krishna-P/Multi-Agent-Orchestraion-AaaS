@@ -29,6 +29,20 @@ const MAX_PASTE = 1000
 const MAX_TITLE = 100
 const TYPE_LABELS = { pdf: 'PDF', txt: 'Text file', paste: 'Pasted text' }
 
+const ANSWER_MODES = [
+  {
+    strict: true,
+    title: 'Only from my documents',
+    description: "If the documents don't have the answer, the agent says so.",
+  },
+  {
+    strict: false,
+    title: 'Documents first, then general knowledge',
+    description:
+      "If the documents don't have the answer, the agent answers from what the AI already knows, and says it isn't from your documents.",
+  },
+]
+
 const SEARCH_MODES = [
   { key: 'hybrid', title: 'Hybrid', note: 'Recommended', description: 'Matches by meaning and by exact words. Best for most documents.' },
   { key: 'semantic', title: 'Semantic', description: 'Matches by meaning, even when the wording differs.' },
@@ -207,7 +221,7 @@ export default function Knowledge({ agent, onNext, onBack }) {
     update.mutate({ id: agent.id, ...changes }, { onError: (err) => toast.error(err.message) })
   }
 
-  function uploadFiles(accepted, rejected) {
+  async function uploadFiles(accepted, rejected) {
     for (const { file, errors } of rejected) {
       const tooLarge = errors.some((error) => error.code === 'file-too-large')
       toast.error(tooLarge ? `${file.name} is larger than 10 MB.` : `${file.name} isn't a .pdf or .txt file.`)
@@ -215,10 +229,13 @@ export default function Knowledge({ agent, onNext, onBack }) {
     for (const file of accepted) {
       const form = new FormData()
       form.append('file', file)
-      addDocument.mutate(form, {
-        onSuccess: () => toast.success(`${file.name} added`),
-        onError: (err) => toast.error(`${file.name}: ${err.message}`),
-      })
+      // One at a time, awaited: every file gets its own success or error message.
+      try {
+        await addDocument.mutateAsync(form)
+        toast.success(`${file.name} added`)
+      } catch (err) {
+        toast.error(`${file.name}: ${err.message}`)
+      }
     }
   }
 
@@ -240,13 +257,41 @@ export default function Knowledge({ agent, onNext, onBack }) {
         <div>
           <Label htmlFor="kb-enabled">Use a knowledge base</Label>
           <p className="mt-1 text-sm text-muted-foreground">
-            Your agent answers only from the documents you add here. If they don&apos;t have the answer, it says so.
+            Your agent searches the documents you add here and shows which one each answer came from.
           </p>
         </div>
       </div>
 
       {agent.kb_enabled && (
         <>
+          <div className="flex flex-col gap-2">
+            <span id="answer-mode-label" className="text-sm font-medium">
+              What should it answer?
+            </span>
+            <div role="radiogroup" aria-labelledby="answer-mode-label" className="grid gap-3 sm:grid-cols-2">
+              {ANSWER_MODES.map((mode) => {
+                const selected = agent.kb_strict === mode.strict
+                return (
+                  <button
+                    key={mode.title}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    disabled={update.isPending}
+                    onClick={() => !selected && save({ kb_strict: mode.strict })}
+                    className={cn(
+                      'flex cursor-pointer flex-col gap-1 rounded-xl border p-3 text-left outline-none transition-colors focus-visible:ring-3 focus-visible:ring-ring/50',
+                      selected ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'hover:bg-muted',
+                    )}
+                  >
+                    <span className="text-sm font-medium">{mode.title}</span>
+                    <span className="text-xs text-muted-foreground">{mode.description}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
           <div className="flex flex-col gap-2">
             <span id="search-mode-label" className="text-sm font-medium">
               How should it search?

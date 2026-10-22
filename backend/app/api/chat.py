@@ -109,7 +109,7 @@ async def chat(
         if ready_documents:
             turn["tools"] += knowledge_base.build_kb_tools(agent.id, agent.search_mode, embedder=embedder, store=store)
             turn["labels"] |= knowledge_base.LABELS
-            turn["extra_instruction"] = knowledge_base.kb_instruction(ready_documents)
+            turn["extra_instruction"] = knowledge_base.kb_instruction(ready_documents, strict=agent.kb_strict)
         provider, model_id = agent.llm_provider, agent.llm_model
     except BaseException:
         runner.end(session.id)
