@@ -1,13 +1,25 @@
-import { memo } from 'react'
+import { SlidersHorizontal } from 'lucide-react'
+import { memo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { Button } from '@/components/ui/button'
+import { DetailsCard } from './DetailsCard'
 import { Sources } from './Sources'
 import { ToolActivity } from './ToolActivity'
 
 const REMARK_PLUGINS = [remarkGfm]
 const MARKDOWN_COMPONENTS = {
-  // Links in a reply go to other sites: open them in a new tab.
-  a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer noopener" />,
+  // Links in a reply go to other sites: open them in a new tab. A link wrapped around an
+  // image shows the image's description as its text: images render as links below, and a
+  // link inside a link is not valid HTML.
+  a: ({ node, children, ...props }) => {
+    const image = node?.children?.find((child) => child.tagName === 'img')
+    return (
+      <a {...props} target="_blank" rel="noreferrer noopener">
+        {image ? image.properties?.alt || 'Image' : children}
+      </a>
+    )
+  },
   // Images are never loaded: an address written into a reply (for example by text hidden in
   // a document) could carry chat content out to another site. They are shown as links.
   img: ({ node: _node, src, alt }) => (
@@ -21,7 +33,30 @@ const MARKDOWN_COMPONENTS = {
  * One chat message. The user's text is shown as typed; the agent's is rendered as Markdown,
  * with the tools it used above the text and the documents it drew on below.
  */
-export const Message = memo(function Message({ role, content, tools, sources, streaming = false }) {
+/** The form that came with a reply: open when the agent asked for it, behind a button when it is a refine offer. */
+function DetailsForm({ form, disabled, onSend }) {
+  const [open, setOpen] = useState(form.kind === 'ask')
+  if (!open) {
+    return (
+      <Button variant="outline" size="sm" className="mt-3" disabled={disabled} onClick={() => setOpen(true)}>
+        <SlidersHorizontal aria-hidden="true" /> Refine with filters
+      </Button>
+    )
+  }
+  return <DetailsCard form={form} disabled={disabled} onSend={onSend} onCancel={() => setOpen(false)} />
+}
+
+export const Message = memo(function Message({
+  role,
+  content,
+  tools,
+  sources,
+  form,
+  formActive = false,
+  formDisabled = false,
+  onSendForm,
+  streaming = false,
+}) {
   if (role === 'user') {
     return (
       <div className="flex justify-end">
@@ -51,6 +86,11 @@ export const Message = memo(function Message({ role, content, tools, sources, st
           )
         )}
         <Sources sources={sources} />
+        {/* Only the newest reply's form can be used; an older request for details is just noted. */}
+        {form && formActive && <DetailsForm form={form} disabled={formDisabled} onSend={onSendForm} />}
+        {form && !formActive && form.kind === 'ask' && (
+          <p className="mt-2 text-xs text-muted-foreground">Asked for details: {form.title}</p>
+        )}
       </div>
     </div>
   )

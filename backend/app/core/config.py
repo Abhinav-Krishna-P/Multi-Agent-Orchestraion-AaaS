@@ -32,6 +32,14 @@ class Settings(BaseSettings):
     embedding_model: str = "gemini-embedding-2"
     chunking_method: str = "recursive"  # or "parent_child"; chosen by the LangSmith comparison
 
+    # Platform keys for the outside-service tools. A tool whose key is empty is not offered.
+    serpapi_api_key: str = ""
+    serper_api_key: str = ""
+    finnhub_api_key: str = ""
+    # Used by searches when the user does not say where: Google country, currency for stays.
+    default_country: str = "in"
+    default_currency: str = "INR"
+
 
 @lru_cache
 def get_settings() -> Settings:

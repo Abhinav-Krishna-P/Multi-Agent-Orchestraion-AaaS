@@ -17,8 +17,8 @@ from app.db.models import ChatSession, Message
 from app.rag.embeddings import Embedder, get_embedder
 from app.rag.retrieve import document_names
 from app.rag.vector_store import VectorStore, get_vector_store
-from app.tools import knowledge_base
-from app.tools.registry import REGISTRY
+from app.tools import forms, knowledge_base
+from app.tools.registry import REGISTRY, available
 
 router = APIRouter()
 
@@ -96,7 +96,7 @@ async def chat(
                 session.title = " ".join(text.split())[:TITLE_LENGTH]
             await db.commit()
         # Read everything the stream needs now; the stream uses its own database sessions.
-        specs = [REGISTRY[name] for name in agent.tools if name in REGISTRY]
+        specs = [REGISTRY[name] for name in agent.tools if name in REGISTRY and available(REGISTRY[name])]
         turn = {
             "session_id": session.id,
             "system_prompt": agent.system_prompt,
@@ -104,12 +104,20 @@ async def chat(
             "tools": [spec.tool for spec in specs],
             "labels": {spec.name: spec.activity for spec in specs},
         }
+        instructions = []
+        form_specs = {spec.name: spec for spec in specs if spec.form}
+        if form_specs:
+            turn["tools"].append(forms.build_ask_tool(form_specs))
+            turn["labels"][forms.ASK_TOOL] = forms.ASK_LABEL
+            turn["forms"] = form_specs
+            instructions.append(forms.details_instruction(form_specs))
         # The knowledge-base tools exist only while there is something to search.
         ready_documents = await document_names(db, agent.id) if agent.kb_enabled else []
         if ready_documents:
             turn["tools"] += knowledge_base.build_kb_tools(agent.id, agent.search_mode, embedder=embedder, store=store)
             turn["labels"] |= knowledge_base.LABELS
-            turn["extra_instruction"] = knowledge_base.kb_instruction(ready_documents, strict=agent.kb_strict)
+            instructions.append(knowledge_base.kb_instruction(ready_documents, strict=agent.kb_strict))
+        turn["extra_instruction"] = "\n\n".join(instructions) or None
         provider, model_id = agent.llm_provider, agent.llm_model
     except BaseException:
         runner.end(session.id)

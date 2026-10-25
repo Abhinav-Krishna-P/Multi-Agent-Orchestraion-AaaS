@@ -272,6 +272,8 @@ function ChatThread({ agent, sessionId, providerName, modelName }) {
       ) : (
         <MessageList
           messages={shownMessages}
+          onSendForm={send}
+          formDisabled={isStreaming || agent.status !== 'live' || !hasKey}
           streamingText={streamingText}
           streamingTools={streamingTools}
           streamingSources={streamingSources}

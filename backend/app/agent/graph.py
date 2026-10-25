@@ -2,11 +2,15 @@
 from collections.abc import Sequence
 
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.prebuilt.tool_node import ToolInvocationError
+
+from app.tools.forms import ASK_TOOL
+from app.tools.http import ToolError
 
 AGENT_NODE = "agent"
 TOOLS_NODE = "tools"
@@ -24,7 +28,20 @@ def _tool_error(error: Exception) -> str:
             for detail in error.source.errors(include_url=False, include_input=False)
         )
         return f"The tool was called with the wrong arguments ({problems}). Correct them and try again."
+    if isinstance(error, ToolError):  # already written for the model to pass on
+        return str(error)
     return "The tool failed. Tell the user it could not be used right now."
+
+
+def _after_tools(state: MessagesState) -> str:
+    """Back to the model, unless it has just asked the user for details: then the turn is
+    over and the user's reply starts the next one."""
+    for message in reversed(state["messages"]):
+        if not isinstance(message, ToolMessage):
+            break
+        if message.name == ASK_TOOL and message.status != "error":
+            return END
+    return AGENT_NODE
 
 
 def build_graph(model: BaseChatModel, tools: Sequence[BaseTool] = ()) -> CompiledStateGraph:
@@ -40,7 +57,7 @@ def build_graph(model: BaseChatModel, tools: Sequence[BaseTool] = ()) -> Compile
     if tools:
         graph.add_node(TOOLS_NODE, ToolNode(tools, handle_tool_errors=_tool_error))
         graph.add_conditional_edges(AGENT_NODE, tools_condition, {"tools": TOOLS_NODE, END: END})
-        graph.add_edge(TOOLS_NODE, AGENT_NODE)
+        graph.add_conditional_edges(TOOLS_NODE, _after_tools, {AGENT_NODE: AGENT_NODE, END: END})
     else:
         graph.add_edge(AGENT_NODE, END)
     return graph.compile()

@@ -18,6 +18,8 @@ export function MessageList({
   error,
   onRetry,
   emptyHint,
+  onSendForm,
+  formDisabled,
 }) {
   const containerRef = useRef(null)
   const stickRef = useRef(true)
@@ -42,13 +44,17 @@ export function MessageList({
         </div>
       ) : (
         <div className="mx-auto flex max-w-3xl flex-col gap-4 p-4" aria-live="polite">
-          {messages.map((message) => (
+          {messages.map((message, index) => (
             <Message
               key={message.id}
               role={message.role}
               content={message.content}
               tools={message.tools}
               sources={message.sources}
+              form={message.form}
+              formActive={index === messages.length - 1 && !isStreaming}
+              formDisabled={formDisabled}
+              onSendForm={onSendForm}
             />
           ))}
           {isStreaming && (

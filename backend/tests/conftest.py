@@ -32,6 +32,11 @@ os.environ["SUPABASE_JWT_SECRET"] = TEST_JWT_SECRET
 os.environ["PLATFORM_GEMINI_API_KEY"] = ""
 os.environ["SUMMARY_MODEL"] = "test-summary-model"
 os.environ["LANGSMITH_TRACING"] = "false"
+os.environ["CHUNKING_METHOD"] = "recursive"
+os.environ["DEFAULT_COUNTRY"] = "in"
+os.environ["DEFAULT_CURRENCY"] = "INR"
+for _name in ("SERPAPI", "SERPER", "FINNHUB"):  # stand-in keys: tests never reach a real service
+    os.environ[f"{_name}_API_KEY"] = f"test-{_name.lower()}-key"
 
 
 @pytest.fixture(scope="session", autouse=True)

@@ -18,6 +18,7 @@ from app.agent.context import HISTORY_LIMIT, build_messages
 from app.agent.graph import AGENT_NODE, MAX_TOOL_ROUNDS, RECURSION_LIMIT, TOOLS_NODE, build_graph
 from app.db.base import session_factory
 from app.db.models import ChatSession, Message
+from app.tools.forms import DEFAULT_ASK_TEXT, form_spec
 
 logger = logging.getLogger(__name__)
 
@@ -85,10 +86,13 @@ async def _recent_history(session_id: uuid.UUID) -> list[Message]:
         return list(reversed(rows.all()))
 
 
-async def _save_reply(session_id: uuid.UUID, text: str, tools: list[dict], sources: list[dict]) -> uuid.UUID:
+async def _save_reply(
+    session_id: uuid.UUID, text: str, tools: list[dict], sources: list[dict], form: dict | None = None
+) -> uuid.UUID:
     async with session_factory() as db:
         message = Message(
-            session_id=session_id, role="assistant", content=text, tool_calls=tools or None, sources=sources or None
+            session_id=session_id, role="assistant", content=text, tool_calls=tools or None,
+            sources=sources or None, form=form,
         )
         db.add(message)
         await db.execute(update(ChatSession).where(ChatSession.id == session_id).values(last_message_at=func.now()))
@@ -131,6 +135,7 @@ async def run_turn(
     tools: Sequence[BaseTool] = (),
     labels: dict[str, str] | None = None,
     extra_instruction: str | None = None,
+    forms: dict | None = None,
 ) -> AsyncIterator[str]:
     """Answers the chat's last user message. The caller holds the chat's claim (try_begin).
 
@@ -138,6 +143,10 @@ async def run_turn(
     carry sources (its `artifact`); they are sent once, just before the reply is done.
     """
     labels = labels or {}
+    forms = forms or {}  # the switched-on tools that have a details form, by name
+    calls: dict[str, tuple[str, dict]] = {}  # tool call id -> (tool name, arguments)
+    asked: dict | None = None  # the form the agent asked the user to fill in
+    refine: dict | None = None  # the form offered after a search that has filters
     parts: list[str] = []
     used: dict[str, dict] = {}  # tool call id -> {label, ok}, in the order the model asked
     sources: list[dict] = []
@@ -171,6 +180,7 @@ async def run_turn(
                     for tool_call in tool_calls:
                         label = labels.get(tool_call["name"], tool_call["name"])
                         used[tool_call["id"]] = {"label": label, "ok": True}
+                        calls[tool_call["id"]] = (tool_call["name"], tool_call["args"])
                         yield sse("tool_start", {"id": tool_call["id"], "label": label})
                 elif node == TOOLS_NODE:
                     for message in messages:
@@ -181,11 +191,20 @@ async def run_turn(
                             used[message.tool_call_id]["ok"] = ok
                         if isinstance(message.artifact, list):
                             sources.extend(message.artifact)
+                        elif isinstance(message.artifact, dict) and "form" in message.artifact:
+                            asked = message.artifact["form"]
+                        name, arguments = calls.get(message.tool_call_id, (None, {}))
+                        if ok and name in forms:
+                            refine = form_spec(forms[name], arguments, "refine")
                         yield sse("tool_end", {"id": message.tool_call_id, "ok": ok})
+        if not parts and asked:
+            # The model asked with a form and wrote nothing itself: say why the form is there.
+            parts.append(DEFAULT_ASK_TEXT)
+            yield sse("token", {"text": DEFAULT_ASK_TEXT})
         text = "".join(parts)
         if not text:
             raise RuntimeError("empty reply")
-        message_id = await _save_reply(session_id, text, list(used.values()), sources)
+        message_id = await _save_reply(session_id, text, list(used.values()), sources, asked or refine)
         settled = True
         _spawn(_update_summary(session_id))
         if sources:

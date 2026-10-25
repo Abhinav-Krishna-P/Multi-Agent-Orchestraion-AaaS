@@ -110,6 +110,7 @@ class MessageOut(_FromRow):
     # Stored on the row as tool_calls / sources; null there means none.
     tools: list[dict] = Field(default_factory=list, validation_alias="tool_calls")
     sources: list[dict] = Field(default_factory=list)
+    form: dict | None = None
 
     @field_validator("tools", "sources", mode="before")
     @classmethod

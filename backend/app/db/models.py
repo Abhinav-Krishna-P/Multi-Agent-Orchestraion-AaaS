@@ -179,6 +179,8 @@ class Message(Base):
     # as [{document_name, page, excerpt}].
     tool_calls: Mapped[list | None] = mapped_column(JSONB)
     sources: Mapped[list | None] = mapped_column(JSONB)
+    # A details form shown with this reply: {kind: "ask" | "refine", tool, title, fields, values}.
+    form: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.clock_timestamp(), nullable=False
     )

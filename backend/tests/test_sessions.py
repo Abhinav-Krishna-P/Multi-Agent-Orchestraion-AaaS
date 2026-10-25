@@ -92,7 +92,7 @@ async def test_messages_oldest_first(client, user_a, db):
     await add_message(db, session["id"], "user", "three")
     messages = (await client.get(f"/sessions/{session['id']}/messages", headers=user_a)).json()
     assert [(m["role"], m["content"]) for m in messages] == [("user", "one"), ("assistant", "two"), ("user", "three")]
-    assert set(messages[0]) == {"id", "role", "content", "created_at", "tools", "sources"}
+    assert set(messages[0]) == {"id", "role", "content", "created_at", "tools", "sources", "form"}
 
 
 async def test_delete_session_removes_messages(client, user_a, db):
