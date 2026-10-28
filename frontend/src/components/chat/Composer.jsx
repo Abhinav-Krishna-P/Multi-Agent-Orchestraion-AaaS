@@ -25,7 +25,7 @@ export function Composer({ agentName, value, onChange, onSend, onStop, isStreami
   }
 
   return (
-    <form onSubmit={submit} className="mx-auto flex w-full max-w-3xl items-end gap-2 p-4">
+    <form onSubmit={submit} className="flex w-full items-end gap-2 p-4">
       <Textarea
         ref={textareaRef}
         rows={1}

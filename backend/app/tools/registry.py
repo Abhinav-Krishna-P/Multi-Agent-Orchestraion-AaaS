@@ -20,6 +20,7 @@ class ToolSpec:
     group: str  # heading in the wizard, by what the tool does
     activity: str  # shown in chat while it runs
     tool: BaseTool
+    app: str = ""  # the service the user knows it by ("Google Flights"); its card and logo in the wizard
     access: str = "read"  # "write" tools will need approval in stage 3
     requires: str | None = None  # the setting holding the platform key this tool needs
     form: tuple[FormField, ...] = ()  # the details dialog, for tools with filters
@@ -44,13 +45,27 @@ def catalog() -> dict:
     for spec in REGISTRY.values():
         if available(spec):
             groups.setdefault(spec.group, []).append(
-                {"name": spec.name, "label": spec.label, "description": spec.description}
+                {"name": spec.name, "label": spec.label, "description": spec.description, "app": spec.app}
             )
     return {"groups": [{"name": name, "tools": tools} for name, tools in groups.items()]}
 
 
+# The service each tool belongs to, as the user knows it. Tools of one service share a card
+# and a logo in the wizard.
+_APPS = {
+    "calculator": "Calculator", "get_current_datetime": "Clock",
+    "web_search": "Google Search", "search_books": "Google Books", "search_images": "Google Images",
+    "translate_text": "Google Translate", "search_news": "Google News", "find_places": "Google Maps",
+    "search_products": "Google Shopping", "search_flights": "Google Flights",
+    "get_current_weather": "Open-Meteo", "get_weather_forecast": "Open-Meteo",
+    "convert_currency": "Frankfurter", "get_exchange_rates": "Frankfurter",
+    "get_stock_quote": "Finnhub", "find_stock_symbol": "Finnhub", "get_company_news": "Finnhub",
+    "search_stays": "Airbnb", "search_amazon": "Amazon",
+}
+
+
 def _add(tool: BaseTool, label: str, description: str, group: str, activity: str, **extra) -> None:
-    register(ToolSpec(tool.name, label, description, group, activity, tool, **extra))
+    register(ToolSpec(tool.name, label, description, group, activity, tool, app=_APPS[tool.name], **extra))
 
 
 _PRICES = (FormField("min_price", "Minimum price", "number"), FormField("max_price", "Maximum price", "number"))

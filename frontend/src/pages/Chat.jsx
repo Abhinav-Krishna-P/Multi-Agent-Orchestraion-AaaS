@@ -49,7 +49,7 @@ function CenteredNote({ children }) {
 /** Shown in place of the message box when the user must do something before chatting. */
 function BlockedBar({ children, action }) {
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-3 p-4">
+    <div className="flex w-full flex-wrap items-center gap-3 p-4">
       <p className="flex-1 text-sm text-muted-foreground">{children}</p>
       {action}
     </div>
@@ -264,7 +264,7 @@ function ChatThread({ agent, sessionId, providerName, modelName }) {
       </header>
 
       {sessionId && messages.isPending ? (
-        <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 p-4" role="status" aria-label="Loading chat">
+        <div className="flex w-full flex-1 flex-col gap-4 p-4" role="status" aria-label="Loading chat">
           <Skeleton className="ml-auto h-10 w-1/2" />
           <Skeleton className="h-20 w-2/3" />
           <Skeleton className="ml-auto h-10 w-1/3" />

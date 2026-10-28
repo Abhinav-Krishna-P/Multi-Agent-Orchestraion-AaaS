@@ -43,7 +43,7 @@ export function MessageList({
           {emptyHint}
         </div>
       ) : (
-        <div className="mx-auto flex max-w-3xl flex-col gap-4 p-4" aria-live="polite">
+        <div className="flex flex-col gap-4 p-4" aria-live="polite">
           {messages.map((message, index) => (
             <Message
               key={message.id}

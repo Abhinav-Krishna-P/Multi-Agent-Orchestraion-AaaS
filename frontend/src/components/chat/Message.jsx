@@ -60,7 +60,7 @@ export const Message = memo(function Message({
   if (role === 'user') {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-2xl bg-primary px-4 py-2.5 text-sm whitespace-pre-wrap text-primary-foreground [overflow-wrap:anywhere]">
+        <div className="max-w-[min(85%,48rem)] rounded-2xl bg-primary px-4 py-2.5 text-sm whitespace-pre-wrap text-primary-foreground [overflow-wrap:anywhere]">
           {content}
         </div>
       </div>
@@ -68,7 +68,7 @@ export const Message = memo(function Message({
   }
   return (
     <div className="flex justify-start">
-      <div className="max-w-[85%] min-w-0 rounded-2xl bg-muted/60 px-4 py-2.5 text-sm [overflow-wrap:anywhere]">
+      <div className="max-w-[min(85%,48rem)] min-w-0 rounded-2xl bg-muted/60 px-4 py-2.5 text-sm [overflow-wrap:anywhere]">
         <ToolActivity tools={tools} />
         {content ? (
           <div className="markdown">

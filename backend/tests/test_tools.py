@@ -98,6 +98,7 @@ async def test_catalog_lists_basics(client, user_a):
         "name": "calculator",
         "label": "Calculator",
         "description": "Works out arithmetic exactly.",
+        "app": "Calculator",
     }
 
 

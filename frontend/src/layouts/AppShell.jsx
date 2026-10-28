@@ -106,7 +106,9 @@ export default function AppShell() {
           </Button>
           <Brand />
         </header>
-        <main className="min-h-0 flex-1 overflow-auto">
+        {/* relative: the hidden inputs behind switches and checkboxes are absolutely positioned;
+            without it they escape this scroller and make the whole page scroll into blank space. */}
+        <main className="relative min-h-0 flex-1 overflow-auto">
           <Outlet context={{ openApiKeys }} />
         </main>
       </div>

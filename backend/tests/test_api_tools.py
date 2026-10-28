@@ -597,3 +597,14 @@ async def test_amazon_marketplace_must_be_an_amazon_site(web):
     assert web.requests == []
     field = next(f for f in REGISTRY["search_amazon"].form if f.name == "marketplace")
     assert field.type == "select" and ("amazon.in", "Amazon India") in field.options
+
+
+async def test_catalog_says_which_service_each_tool_belongs_to(client, user_a):
+    """The Tools step shows one card per service, with that service's logo."""
+    tools = {t["name"]: t for g in (await client.get("/tools", headers=user_a)).json()["groups"] for t in g["tools"]}
+    assert tools["web_search"]["app"] == "Google Search" and tools["search_flights"]["app"] == "Google Flights"
+    assert tools["search_stays"]["app"] == "Airbnb" and tools["search_amazon"]["app"] == "Amazon"
+    assert tools["get_current_weather"]["app"] == tools["get_weather_forecast"]["app"] == "Open-Meteo"
+    assert {tools[n]["app"] for n in ("get_stock_quote", "find_stock_symbol", "get_company_news")} == {"Finnhub"}
+    assert tools["convert_currency"]["app"] == "Frankfurter" and tools["calculator"]["app"] == "Calculator"
+    assert all(t["app"] for t in tools.values())
