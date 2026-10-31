@@ -3,6 +3,8 @@ import { memo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
+import { ResultCards } from './cards'
 import { DetailsCard } from './DetailsCard'
 import { Sources } from './Sources'
 import { ToolActivity } from './ToolActivity'
@@ -68,7 +70,13 @@ export const Message = memo(function Message({
   }
   return (
     <div className="flex justify-start">
-      <div className="max-w-[min(85%,48rem)] min-w-0 rounded-2xl bg-muted/60 px-4 py-2.5 text-sm [overflow-wrap:anywhere]">
+      <div
+        className={cn(
+          'min-w-0 rounded-2xl bg-muted/60 px-4 py-2.5 text-sm [overflow-wrap:anywhere]',
+          // A reply with result cards gets room for a row of them.
+          tools?.some((tool) => tool.card) ? 'w-full max-w-[min(100%,60rem)]' : 'max-w-[min(85%,48rem)]',
+        )}
+      >
         <ToolActivity tools={tools} />
         {content ? (
           <div className="markdown">
@@ -85,6 +93,7 @@ export const Message = memo(function Message({
             </span>
           )
         )}
+        <ResultCards tools={tools} />
         <Sources sources={sources} />
         {/* Only the newest reply's form can be used; an older request for details is just noted. */}
         {form && formActive && <DetailsForm form={form} disabled={formDisabled} onSend={onSendForm} />}

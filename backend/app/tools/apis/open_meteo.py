@@ -1,8 +1,6 @@
 """Weather from Open-Meteo. No key. Free for non-commercial use."""
-from langchain_core.tools import tool
-
 from app.core.config import get_settings
-from app.tools.http import ToolError, fetch_json, wrap
+from app.tools.http import ToolError, card_tool, fetch_json, pick, shown
 
 SERVICE = "Open-Meteo"
 GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
@@ -14,6 +12,10 @@ _CONDITIONS = (
     ((51, 53, 55, 56, 57), "Drizzle"), ((61, 63, 65, 66, 67), "Rain"), ((71, 73, 75, 77), "Snow"),
     ((80, 81, 82), "Rain showers"), ((85, 86), "Snow showers"), ((95, 96, 99), "Thunderstorm"),
 )
+
+
+_DAILY_EXTRAS = {"rain_mm": "precipitation_sum", "wind_kmh": "wind_speed_10m_max", "uv_index": "uv_index_max",
+                 "sunrise": "sunrise", "sunset": "sunset"}
 
 
 def _conditions(code) -> str:
@@ -42,25 +44,27 @@ async def _locate(place: str) -> tuple[dict, str]:
     return found, name
 
 
-@tool
-async def get_current_weather(location: str) -> str:
+@card_tool
+async def get_current_weather(location: str) -> tuple[str, dict | None]:
     """Get the weather right now in a city or place: temperature, humidity, wind and conditions.
     Add the region or country after a comma when the name is ambiguous, as in "Kochi, India"."""
     found, name = await _locate(location)
     data = await fetch_json(SERVICE, FORECAST_URL, params={
         "latitude": found["latitude"], "longitude": found["longitude"], "timezone": "auto",
-        "current": "temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code",
+        "current": "temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code,apparent_temperature,precipitation,is_day",
     })
     current = data["current"]
-    return wrap(SERVICE, {
+    weather = {
         "place": name, "time": current.get("time"), "conditions": _conditions(current.get("weather_code")),
         "temperature_c": current.get("temperature_2m"), "humidity_percent": current.get("relative_humidity_2m"),
         "wind_kmh": current.get("wind_speed_10m"),
-    })
+        **pick(current, feels_like_c="apparent_temperature", precipitation_mm="precipitation", is_day="is_day"),
+    }
+    return shown(SERVICE, weather, "weather", **weather)
 
 
-@tool
-async def get_weather_forecast(location: str, days: int = 3) -> str:
+@card_tool
+async def get_weather_forecast(location: str, days: int = 3) -> tuple[str, dict | None]:
     """Get the daily weather forecast for a city or place, for the next 1 to 7 days:
     conditions, high and low temperature, and chance of rain. Add the region or country
     after a comma when the name is ambiguous, as in "Kochi, India"."""
@@ -69,13 +73,20 @@ async def get_weather_forecast(location: str, days: int = 3) -> str:
     found, name = await _locate(location)
     data = await fetch_json(SERVICE, FORECAST_URL, params={
         "latitude": found["latitude"], "longitude": found["longitude"], "timezone": "auto", "forecast_days": days,
-        "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
+        "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,"
+                 "precipitation_sum,wind_speed_10m_max,uv_index_max,sunrise,sunset",
     })
     daily = data["daily"]
-    return wrap(SERVICE, {"place": name, "days": [
-        {"date": date, "conditions": _conditions(code), "high_c": high, "low_c": low, "rain_chance_percent": rain}
-        for date, code, high, low, rain in zip(
+    forecast = {"place": name, "days": [
+        {
+            "date": date, "conditions": _conditions(code), "high_c": high, "low_c": low, "rain_chance_percent": rain,
+            # The extra series are optional: a value the service left out is simply not shown.
+            **{new: daily[old][index] for new, old in _DAILY_EXTRAS.items()
+               if index < len(daily.get(old) or []) and daily[old][index] is not None},
+        }
+        for index, (date, code, high, low, rain) in enumerate(zip(
             daily["time"], daily["weather_code"], daily["temperature_2m_max"],
             daily["temperature_2m_min"], daily["precipitation_probability_max"],
-        )
-    ]})
+        ))
+    ]}
+    return shown(SERVICE, forecast, "forecast", **forecast)

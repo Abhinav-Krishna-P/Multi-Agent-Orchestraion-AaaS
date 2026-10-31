@@ -67,36 +67,47 @@ def _evaluate(node: ast.AST):
     raise ValueError("not arithmetic")
 
 
-@tool
-def calculator(expression: str) -> str:
-    """Work out an arithmetic expression exactly. Use this for any calculation instead of
-    doing it in your head. Supports + - * / // % **, parentheses, and sqrt, abs, round,
-    min, max. Example: "(1250 * 3) / 4"."""
+def _calculate(expression: str) -> tuple[str, bool]:
+    """The answer in words, and whether it is a result (rather than a refusal)."""
     try:
         result = _evaluate(ast.parse(expression.strip(), mode="eval").body)
         if isinstance(result, float):
             if math.isinf(result) or math.isnan(result):
-                return TOO_LARGE
-            return str(float(f"{result:.12g}"))  # hide float noise such as 0.30000000000000004
+                return TOO_LARGE, False
+            return str(float(f"{result:.12g}")), True  # hide float noise such as 0.30000000000000004
         if isinstance(result, int) and not isinstance(result, bool):
-            return str(result)
-        return NOT_ARITHMETIC
+            return str(result), True
+        return NOT_ARITHMETIC, False
     except ZeroDivisionError:
-        return "That divides by zero."
+        return "That divides by zero.", False
     except OverflowError:
-        return TOO_LARGE
+        return TOO_LARGE, False
     except Exception:
-        return NOT_ARITHMETIC
+        return NOT_ARITHMETIC, False
 
 
-@tool
-def get_current_datetime(timezone: str = "UTC") -> str:
+# Each tool returns its text for the model and, when it worked, a card for the chat.
+@tool(response_format="content_and_artifact")
+def calculator(expression: str) -> tuple[str, dict | None]:
+    """Work out an arithmetic expression exactly. Use this for any calculation instead of
+    doing it in your head. Supports + - * / // % **, parentheses, and sqrt, abs, round,
+    min, max. Example: "(1250 * 3) / 4"."""
+    text, worked = _calculate(expression)
+    card = {"kind": "calculation", "service": "Calculator", "expression": expression.strip(), "result": text}
+    return text, {"card": card} if worked else None
+
+
+@tool(response_format="content_and_artifact")
+def get_current_datetime(timezone: str = "UTC") -> tuple[str, dict | None]:
     """Get the current date, time and weekday. Use this whenever the answer depends on
     today's date or the time now; you do not know them otherwise. `timezone` is an IANA
     name such as "Asia/Kolkata" or "Europe/London"."""
     try:
         now = datetime.now(ZoneInfo(timezone))
     except Exception:
-        return f"I don't know the time zone '{timezone}'."
+        return f"I don't know the time zone '{timezone}'.", None
     offset = now.strftime("%z")
-    return f"{now:%A, %d %B %Y, %H:%M:%S} ({timezone}, UTC{offset[:3]}:{offset[3:]})"
+    offset = f"UTC{offset[:3]}:{offset[3:]}"
+    card = {"kind": "clock", "service": "Clock", "weekday": f"{now:%A}", "date": f"{now:%d %B %Y}",
+            "time": f"{now:%H:%M}", "timezone": timezone, "offset": offset}
+    return f"{now:%A, %d %B %Y, %H:%M:%S} ({timezone}, {offset})", {"card": card}

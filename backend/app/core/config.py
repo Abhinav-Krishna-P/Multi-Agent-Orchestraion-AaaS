@@ -29,6 +29,7 @@ class Settings(BaseSettings):
 
     # Knowledge base
     chroma_url: str = ""
+    chroma_token: str = ""  # sent as the X-Chroma-Token header when set; the proxy in front of Chroma checks it
     embedding_model: str = "gemini-embedding-2"
     chunking_method: str = "recursive"  # or "parent_child"; chosen by the LangSmith comparison
 

@@ -38,14 +38,14 @@ async def test_tool_runs_and_answer_streams(client, user_a, live_chat, use_model
     assert names == ["tool_start", "tool_end", "token", "token", "done"]
     start, end = events[0][1], events[1][1]
     assert start["label"] == "Calculating…"
-    assert end == {"id": start["id"], "ok": True}
+    assert end == {"id": start["id"], "ok": True, "card": {"kind": "calculation", "service": "Calculator", "expression": "6*7", "result": "42"}}
     assert tokens(events) == "It is 42."
     assert model.bound == ["calculator"]
     tool_result = model.received[1][-1]
     assert isinstance(tool_result, ToolMessage) and tool_result.content == "42"
     assistant = (await saved_rows(db, session["id"]))[-1]
     assert assistant.content == "It is 42."
-    assert assistant.tool_calls == [{"label": "Calculating…", "ok": True}]
+    assert assistant.tool_calls == [{"label": "Calculating…", "ok": True, "card": {"kind": "calculation", "service": "Calculator", "expression": "6*7", "result": "42"}}]
     assert not assistant.sources
 
 
@@ -56,7 +56,7 @@ async def test_messages_endpoint_returns_tools_and_sources(client, user_a, live_
     await send(client, user_a, session["id"], {"message": "1+1?"})
     user_row, assistant_row = (await client.get(f"/sessions/{session['id']}/messages", headers=user_a)).json()
     assert user_row["tools"] == [] and user_row["sources"] == []
-    assert assistant_row["tools"] == [{"label": "Calculating…", "ok": True}]
+    assert assistant_row["tools"] == [{"label": "Calculating…", "ok": True, "card": {"kind": "calculation", "service": "Calculator", "expression": "1+1", "result": "2"}}]
     assert assistant_row["sources"] == []
 
 
@@ -172,4 +172,4 @@ async def test_stop_mid_tool_turn_saves_partial_text_and_tools(live_chat, db):
     await runner.wait_for_background()
     assistant = (await saved_rows(db, session["id"]))[-1]
     assert assistant.role == "assistant" and assistant.content == "Partial"
-    assert assistant.tool_calls == [{"label": "Calculating…", "ok": True}]
+    assert assistant.tool_calls == [{"label": "Calculating…", "ok": True, "card": {"kind": "calculation", "service": "Calculator", "expression": "2+2", "result": "4"}}]

@@ -99,8 +99,8 @@ function ChatThread({ agent, sessionId, providerName, modelName }) {
         },
         onToken: (text) => setStreamingText((previous) => previous + text),
         onToolStart: (tool) => setStreamingTools((tools) => [...tools, { ...tool, ok: null }]),
-        onToolEnd: ({ id, ok }) =>
-          setStreamingTools((tools) => tools.map((tool) => (tool.id === id ? { ...tool, ok } : tool))),
+        onToolEnd: ({ id, ok, card }) =>
+          setStreamingTools((tools) => tools.map((tool) => (tool.id === id ? { ...tool, ok, card } : tool))),
         onSources: setStreamingSources,
         onError: (data) => {
           failure = data

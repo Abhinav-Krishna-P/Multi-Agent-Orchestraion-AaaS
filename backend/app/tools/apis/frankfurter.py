@@ -2,10 +2,8 @@
 answer, Google's currency converter through SerpApi."""
 import re
 
-from langchain_core.tools import tool
-
 from app.tools.apis import serpapi
-from app.tools.http import ToolError, fetch_json, wrap
+from app.tools.http import ToolError, card_tool, fetch_json, shown
 
 URL = "https://api.frankfurter.dev/v1/latest"
 FALLBACK_CURRENCIES = ("USD", "EUR", "GBP", "INR", "JPY", "AED")
@@ -37,8 +35,8 @@ async def _rates(base: str, quotes: list[str] | None) -> tuple[dict[str, float],
     return rates, "Google"
 
 
-@tool
-async def convert_currency(amount: float, from_currency: str, to_currency: str) -> str:
+@card_tool
+async def convert_currency(amount: float, from_currency: str, to_currency: str) -> tuple[str, dict | None]:
     """Convert an amount of money from one currency to another at the latest exchange rate.
     Currencies are three-letter codes such as USD, EUR, INR."""
     if amount <= 0:
@@ -47,15 +45,17 @@ async def convert_currency(amount: float, from_currency: str, to_currency: str) 
     rates, source = await _rates(base, [quote])
     if quote not in rates:
         raise ToolError("I couldn't get an exchange rate for those currencies right now.")
-    return wrap(source, {"amount": amount, "from": base, "to": quote, "rate": rates[quote],
-                         "result": round(amount * rates[quote], 2), "source": source})
+    conversion = {"amount": amount, "from": base, "to": quote, "rate": rates[quote],
+                  "result": round(amount * rates[quote], 2), "source": source}
+    return shown(source, conversion, "conversion", **conversion)
 
 
-@tool
-async def get_exchange_rates(base_currency: str, currencies: list[str] | None = None) -> str:
+@card_tool
+async def get_exchange_rates(base_currency: str, currencies: list[str] | None = None) -> tuple[str, dict | None]:
     """Get the latest exchange rates for one unit of a currency against others. Currencies are
     three-letter codes; leave `currencies` out for the main ones."""
     base = _code(base_currency)
     quotes = [_code(c) for c in currencies] if currencies else None
     rates, source = await _rates(base, quotes)
-    return wrap(source, {"base": base, "rates": rates, "source": source})
+    result = {"base": base, "rates": rates, "source": source}
+    return shown(source, result, "rates", **result)

@@ -22,6 +22,8 @@ from app.tools.forms import DEFAULT_ASK_TEXT, form_spec
 
 logger = logging.getLogger(__name__)
 
+# Saved as the reply when the user stops after results arrived but before any text was written.
+STOPPED_TEXT = "Stopped before I wrote a reply. What I had found is below."
 MODEL_ERROR_MESSAGE = "The model couldn't reply. Check your API key and try again."
 
 _in_flight: set[uuid.UUID] = set()
@@ -193,10 +195,14 @@ async def run_turn(
                             sources.extend(message.artifact)
                         elif isinstance(message.artifact, dict) and "form" in message.artifact:
                             asked = message.artifact["form"]
+                        # A card is the tool's result drawn for the user: sent now, saved with the reply.
+                        card = message.artifact.get("card") if isinstance(message.artifact, dict) else None
+                        if card and message.tool_call_id in used:
+                            used[message.tool_call_id]["card"] = card
                         name, arguments = calls.get(message.tool_call_id, (None, {}))
                         if ok and name in forms:
                             refine = form_spec(forms[name], arguments, "refine")
-                        yield sse("tool_end", {"id": message.tool_call_id, "ok": ok})
+                        yield sse("tool_end", {"id": message.tool_call_id, "ok": ok, **({"card": card} if card else {})})
         if not parts and asked:
             # The model asked with a form and wrote nothing itself: say why the form is there.
             parts.append(DEFAULT_ASK_TEXT)
@@ -217,6 +223,7 @@ async def run_turn(
         for event in _failure_events():
             yield event
     finally:
-        if not settled and parts:
-            # Stopped by the user or the connection dropped: keep what was written.
-            _spawn(_save_partial_reply(session_id, "".join(parts), list(used.values()), sources))
+        if not settled and (parts or any("card" in tool for tool in used.values())):
+            # Stopped by the user or the connection dropped: keep what was written, and any
+            # result cards already on the user's screen even if no text had arrived yet.
+            _spawn(_save_partial_reply(session_id, "".join(parts) or STOPPED_TEXT, list(used.values()), sources))

@@ -351,7 +351,7 @@ async def test_stays_simple_and_filtered(web):
     web.replies["serpapi.com"] = _stays
     data = data_of(await run("search_stays", location="Goa"))
     assert web.params() == {"engine": "airbnb", "q": "Goa", "adults": "1", "currency": "INR", "api_key": "test-serpapi-key"}
-    assert len(data) == 5 and data[0] == {"title": "Villa 0", "price": "₹4000 per night", "rating": 4.8, "reviews": 120, "link": "https://air/0", "bedrooms": 2, "beds": 3}
+    assert len(data) == 8 and data[0] == {"title": "Villa 0", "price": "₹4000 per night", "rating": 4.8, "reviews": 120, "link": "https://air/0", "bedrooms": 2, "beds": 3}
     await run("search_stays", location="Goa", check_in=TOMORROW, check_out=IN_3_DAYS, guests=2, room_type="entire_home", min_price=2000, max_price=6000)
     sent = web.params()
     assert sent["check_in_date"] == TOMORROW and sent["check_out_date"] == IN_3_DAYS and sent["adults"] == "2"
@@ -399,8 +399,8 @@ async def test_images(web):
     web.replies["google.serper.dev"] = {"images": [{"title": f"I{i}", "imageUrl": f"https://img/{i}.jpg", "link": f"https://page/{i}", "source": "Site", "thumbnailUrl": "t"} for i in range(7)]}
     data = data_of(await run("search_images", query="kerala backwaters"))
     assert web.last.url.path == "/images" and web.last.headers["x-api-key"] == "test-serper-key"
-    assert web.body() == {"q": "kerala backwaters", "gl": "in", "num": 5}
-    assert len(data) == 5 and data[0] == {"title": "I0", "image": "https://img/0.jpg", "page": "https://page/0", "source": "Site"}
+    assert web.body() == {"q": "kerala backwaters", "gl": "in", "num": 8}
+    assert len(data) == 7 and data[0] == {"title": "I0", "image": "https://img/0.jpg", "page": "https://page/0", "source": "Site"}
 
 
 async def test_news_filters(web):
@@ -430,7 +430,7 @@ async def test_products_price_range_is_applied_to_the_results(web):
     assert web.last.url.path == "/shopping" and web.body() == {"q": "running shoes", "gl": "in", "num": 40}
     assert [item["title"] for item in data] == ["Shoe 0", "Shoe 1", "Shoe 5"]
     assert data[0] == {"title": "Shoe 0", "price": "₹1,499.00", "store": "Shop", "rating": 4.1, "reviews": 10, "link": "https://s/0"}
-    assert len(data_of(await run("search_products", query="running shoes"))) == 5
+    assert len(data_of(await run("search_products", query="running shoes"))) == 6  # picture lists show up to 8
 
 
 async def test_price_range_that_matches_nothing(web):

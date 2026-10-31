@@ -18,7 +18,7 @@ from app.rag.embeddings import Embedder, get_embedder
 from app.rag.retrieve import document_names
 from app.rag.vector_store import VectorStore, get_vector_store
 from app.tools import forms, knowledge_base
-from app.tools.registry import REGISTRY, available
+from app.tools.registry import CARDS_INSTRUCTION, REGISTRY, available
 
 router = APIRouter()
 
@@ -104,7 +104,7 @@ async def chat(
             "tools": [spec.tool for spec in specs],
             "labels": {spec.name: spec.activity for spec in specs},
         }
-        instructions = []
+        instructions = [CARDS_INSTRUCTION] if specs else []
         form_specs = {spec.name: spec for spec in specs if spec.form}
         if form_specs:
             turn["tools"].append(forms.build_ask_tool(form_specs))

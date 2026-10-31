@@ -43,8 +43,9 @@ def _where(conditions: dict) -> dict:
 
 
 class ChromaVectorStore:
-    def __init__(self, url: str, embedding_model: str):
+    def __init__(self, url: str, embedding_model: str, token: str = ""):
         self._url = url
+        self._token = token
         # One collection per embedding model: vectors from different models must never mix.
         self._name = "chunks_" + re.sub(r"[^a-zA-Z0-9_-]", "_", embedding_model)
         self._collection = None
@@ -59,6 +60,8 @@ class ChromaVectorStore:
             client = chromadb.HttpClient(
                 host=parsed.hostname, port=parsed.port or (443 if parsed.scheme == "https" else 8000),
                 ssl=parsed.scheme == "https",
+                # Checked by the proxy in front of Chroma; this Chroma version has no login of its own.
+                headers={"X-Chroma-Token": self._token} if self._token else None,
             )
             self._collection = client.get_or_create_collection(
                 self._name, configuration={"hnsw": {"space": "cosine"}}
@@ -103,4 +106,4 @@ class ChromaVectorStore:
 @lru_cache
 def get_vector_store() -> VectorStore:
     settings = get_settings()
-    return ChromaVectorStore(settings.chroma_url, settings.embedding_model)
+    return ChromaVectorStore(settings.chroma_url, settings.embedding_model, settings.chroma_token)
