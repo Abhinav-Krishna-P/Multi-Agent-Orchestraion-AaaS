@@ -102,6 +102,30 @@ class AgentTool(Base):
     created_at: Mapped[datetime] = _created_at()
 
 
+class AgentIntegration(Base):
+    """One outside app (Gmail, Slack, ...) connected to one agent through Composio. Only
+    Composio's handle for the connection is kept here; the app's tokens never leave Composio."""
+
+    __tablename__ = "agent_integrations"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "app", name="uq_agent_integrations_agent_app"),
+        CheckConstraint("status in ('pending', 'active', 'expired')", name="ck_agent_integrations_status"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    app: Mapped[str] = mapped_column(Text, nullable=False)
+    connected_account_id: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="pending", server_default="pending")
+    # The names of the app's actions switched on for this agent.
+    actions: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
 class Document(Base):
     """One document in an agent's knowledge base. Its text lives in document_chunks, its vectors in Chroma."""
 

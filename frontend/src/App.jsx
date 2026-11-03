@@ -9,6 +9,7 @@ import AgentsList from '@/pages/AgentsList'
 import AgentWizard from '@/pages/AgentWizard'
 import Analytics from '@/pages/Analytics'
 import Chat from '@/pages/Chat'
+import Connected from '@/pages/Connected'
 import Landing from '@/pages/Landing'
 
 function FullPageSpinner() {
@@ -40,6 +41,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<LandingRoute />} />
             <Route element={<RequireAuth />}>
+              <Route path="/app/connected" element={<Connected />} />
               <Route path="/app" element={<AppShell />}>
                 <Route index element={<Navigate to="/app/agents" replace />} />
                 <Route path="agents" element={<AgentsList />} />

@@ -13,7 +13,8 @@ from app.api.sessions import agent_not_live
 from app.core.errors import ApiError
 from app.core.llm_catalog import provider_name
 from app.db.base import get_db
-from app.db.models import ChatSession, Message
+from app.db.models import AgentIntegration, ChatSession, Message
+from app.integrations import composio
 from app.rag.embeddings import Embedder, get_embedder
 from app.rag.retrieve import document_names
 from app.rag.vector_store import VectorStore, get_vector_store
@@ -117,6 +118,13 @@ async def chat(
             turn["tools"] += knowledge_base.build_kb_tools(agent.id, agent.search_mode, embedder=embedder, store=store)
             turn["labels"] |= knowledge_base.LABELS
             instructions.append(knowledge_base.kb_instruction(ready_documents, strict=agent.kb_strict))
+        # The actions of the apps this agent is connected to. The account each runs on is bound here.
+        if composio.enabled():
+            connected = await db.scalars(select(AgentIntegration).where(
+                AgentIntegration.agent_id == agent.id, AgentIntegration.status == "active"))
+            app_tools, app_labels = await composio.build_tools(connected.all(), str(session.user_id))
+            turn["tools"] += app_tools
+            turn["labels"] |= app_labels
         turn["extra_instruction"] = "\n\n".join(instructions) or None
         provider, model_id = agent.llm_provider, agent.llm_model
     except BaseException:

@@ -8,7 +8,9 @@ from app.api.schemas import AgentCreate, AgentOut, AgentUpdate
 from app.core.errors import ApiError
 from app.core.llm_catalog import is_valid_model
 from app.db.base import get_db
-from app.db.models import Agent, Document, User
+from app.api.integrations import disconnect_quietly
+from app.db.models import Agent, AgentIntegration, Document, User
+from app.integrations import composio
 from app.rag.vector_store import VectorStore, VectorStoreUnavailable, get_vector_store
 
 router = APIRouter()
@@ -103,6 +105,10 @@ async def delete_agent(
                 503, "vector_store_unavailable",
                 "The knowledge base can't be reached right now. Try again in a moment.",
             ) from error
+    # The agent's app connections live at Composio too; its rows here go by cascade.
+    if composio.enabled():
+        for row in await db.scalars(select(AgentIntegration).where(AgentIntegration.agent_id == agent.id)):
+            await disconnect_quietly(row.connected_account_id)
     await db.delete(agent)
     await db.commit()
     return Response(status_code=204)

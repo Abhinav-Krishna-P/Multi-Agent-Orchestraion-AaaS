@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import { useDeployAgent, useDocuments, useLlmKeys, useModelCatalog, usePersonas } from '@/lib/queries'
+import { useDeployAgent, useDocuments, useIntegrations, useLlmKeys, useModelCatalog, usePersonas } from '@/lib/queries'
 
 function SummaryRow({ label, onEdit, children }) {
   return (
@@ -40,6 +40,7 @@ export default function Deploy({ agent, onBack, goTo }) {
   if (!agent.llm_provider) warnings.push('Choose a model before chatting.')
   else if (llmKeys.data && !hasKey) warnings.push('Add your API key before chatting.')
   const documentCount = documents.data?.length ?? 0
+  const connectedApps = (useIntegrations(agent.id).data?.apps ?? []).filter((app) => app.status === 'active')
   const indexing = documents.data?.some((doc) => doc.status === 'pending' || doc.status === 'processing')
   if (agent.kb_enabled && indexing) warnings.push('Some documents are still being indexed.')
   if (agent.kb_enabled && documents.data && documentCount === 0) {
@@ -88,6 +89,9 @@ export default function Deploy({ agent, onBack, goTo }) {
         </SummaryRow>
         <SummaryRow label="Tools" onEdit={() => goTo('tools')}>
           {agent.tools.length === 0 ? 'None' : `${agent.tools.length} ${agent.tools.length === 1 ? 'tool' : 'tools'}`}
+        </SummaryRow>
+        <SummaryRow label="Apps" onEdit={() => goTo('apps')}>
+          {connectedApps.length === 0 ? 'None' : connectedApps.map((app) => app.name).join(', ')}
         </SummaryRow>
       </dl>
 

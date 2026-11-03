@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useAgent } from '@/lib/queries'
 import { cn } from '@/lib/utils'
+import Apps from './Apps'
 import Basics from './Basics'
 import Behavior from './Behavior'
 import Deploy from './Deploy'
@@ -11,13 +12,14 @@ import Knowledge from './Knowledge'
 import Model from './Model'
 import Tools from './Tools'
 
-// The steps are a real sequence, so they are numbered. A later stage adds Apps.
+// The steps are a real sequence, so they are numbered.
 const STEPS = [
   { key: 'basics', label: 'Basics', Component: Basics },
   { key: 'behavior', label: 'Behavior', Component: Behavior },
   { key: 'model', label: 'Model', Component: Model },
   { key: 'knowledge', label: 'Knowledge', Component: Knowledge },
   { key: 'tools', label: 'Tools', Component: Tools },
+  { key: 'apps', label: 'Apps', Component: Apps },
   { key: 'deploy', label: 'Deploy', Component: Deploy },
 ]
 

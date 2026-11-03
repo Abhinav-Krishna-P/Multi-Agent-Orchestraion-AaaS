@@ -13,6 +13,7 @@ export const keys = {
   messages: (sessionId) => ['messages', sessionId],
   documents: (agentId) => ['documents', agentId],
   tools: ['tools'],
+  integrations: (agentId) => ['integrations', agentId],
 }
 
 // --- LLM keys and models --------------------------------------------------------------
@@ -174,4 +175,37 @@ export function useToolCatalog() {
 
 export function useSetAgentTools() {
   return useAgentMutation(({ id, tools }) => api(`/agents/${id}/tools`, { method: 'PUT', body: { tools } }))
+}
+
+// --- App connections ---------------------------------------------------------------------
+
+/** The apps an agent can connect to, with each one's status and (once connected) its actions. */
+export function useIntegrations(agentId) {
+  return useQuery({ queryKey: keys.integrations(agentId), queryFn: () => api(`/agents/${agentId}/integrations`) })
+}
+
+function useIntegrationMutation(agentId, mutationFn) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn,
+    onSettled: () => client.invalidateQueries({ queryKey: keys.integrations(agentId) }),
+  })
+}
+
+export function useConnectApp(agentId) {
+  return useIntegrationMutation(agentId, (app) => api(`/agents/${agentId}/integrations/${app}/connect`, { method: 'POST' }))
+}
+
+export function useRefreshApp(agentId) {
+  return useIntegrationMutation(agentId, (app) => api(`/agents/${agentId}/integrations/${app}/refresh`, { method: 'POST' }))
+}
+
+export function useSetAppActions(agentId) {
+  return useIntegrationMutation(agentId, ({ app, actions }) =>
+    api(`/agents/${agentId}/integrations/${app}/actions`, { method: 'PUT', body: { actions } }),
+  )
+}
+
+export function useDisconnectApp(agentId) {
+  return useIntegrationMutation(agentId, (app) => api(`/agents/${agentId}/integrations/${app}`, { method: 'DELETE' }))
 }

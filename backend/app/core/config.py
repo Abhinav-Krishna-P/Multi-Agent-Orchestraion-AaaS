@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     serpapi_api_key: str = ""
     serper_api_key: str = ""
     finnhub_api_key: str = ""
+    composio_api_key: str = ""  # one key for the whole platform; never sent to the browser
     # Used by searches when the user does not say where: Google country, currency for stays.
     default_country: str = "in"
     default_currency: str = "INR"

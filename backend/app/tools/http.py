@@ -49,12 +49,14 @@ async def fetch_json(
     json: dict | None = None,
     method: str = "GET",
     is_error=None,
+    cache: bool = True,
 ) -> Any:
     """Calls a service and returns its JSON. Keys go in `secret_params` or `headers`: those
     are sent but never logged and never part of the cache key. `is_error(data)` spots a
-    failure that a service reports inside a normal reply (a used-up quota, for example)."""
+    failure that a service reports inside a normal reply (a used-up quota, for example).
+    `cache=False` is for calls that do something or whose answer changes: they always go out."""
     key = json_module.dumps([service, method, url, params, json], sort_keys=True, default=str)
-    remembered = _cache.get(key)
+    remembered = _cache.get(key) if cache else None
     if remembered and remembered[0] > time.monotonic():
         return remembered[1]
     try:
@@ -77,9 +79,10 @@ async def fetch_json(
         # The reason goes to the log only, and never the URL: it can carry a key.
         logger.warning("%s call failed: %s", service, problem)
         raise unavailable(service) from None
-    if len(_cache) >= CACHE_MAX:
-        _cache.clear()
-    _cache[key] = (time.monotonic() + CACHE_SECONDS, data)
+    if cache:
+        if len(_cache) >= CACHE_MAX:
+            _cache.clear()
+        _cache[key] = (time.monotonic() + CACHE_SECONDS, data)
     return data
 
 
