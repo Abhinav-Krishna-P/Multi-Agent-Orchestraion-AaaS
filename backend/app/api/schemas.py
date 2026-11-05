@@ -111,6 +111,7 @@ class MessageOut(_FromRow):
     tools: list[dict] = Field(default_factory=list, validation_alias="tool_calls")
     sources: list[dict] = Field(default_factory=list)
     form: dict | None = None
+    approval: dict | None = None
 
     @field_validator("tools", "sources", mode="before")
     @classmethod
@@ -118,11 +119,18 @@ class MessageOut(_FromRow):
         return value or []
 
 
+class ApprovalIn(BaseModel):
+    message_id: uuid.UUID
+    decision: Literal["approve", "reject"]
+
+
 class ChatIn(BaseModel):
-    """Either a new message, or a request to answer the last unanswered one again."""
+    """A new message, a request to answer the last unanswered one again, or the user's answer
+    to an action the agent asked approval for."""
 
     message: str | None = None
     retry: bool = False
+    approval: ApprovalIn | None = None
 
 
 class DocumentOut(_FromRow):

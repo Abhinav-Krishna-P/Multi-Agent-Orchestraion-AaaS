@@ -77,7 +77,8 @@ function ChatThread({ agent, sessionId, providerName, modelName }) {
   const openedRef = useRef(false)
   const sentFirstRef = useRef(false)
 
-  async function runTurn(targetSessionId, body) {
+  // `shownText` is what appears as the user's message while the reply streams.
+  async function runTurn(targetSessionId, body, shownText = body.message) {
     const controller = new AbortController()
     abortRef.current = controller
     openedRef.current = false
@@ -85,7 +86,7 @@ function ChatThread({ agent, sessionId, providerName, modelName }) {
     setStreamingText('')
     setStreamingTools([])
     setStreamingSources([])
-    setPendingUserText(body.message ?? null)
+    setPendingUserText(shownText ?? null)
     setIsStreaming(true)
 
     let failure = null
@@ -158,6 +159,14 @@ function ChatThread({ agent, sessionId, providerName, modelName }) {
       if (STALE_STATE_CODES.includes(err.code)) client.invalidateQueries({ queryKey: keys.agents })
       else setError({ message: err.message })
     }
+  }
+
+  // The user's answer to an action the agent asked approval for. Only the choice is sent:
+  // what runs is the server's own copy of the request.
+  function decide(message, decision) {
+    const { action_name: action, app_name: app } = message.approval
+    const shown = `${decision === 'approve' ? 'Approved' : 'Declined'}: ${action} (${app})`
+    runTurn(sessionId, { approval: { message_id: message.id, decision } }, shown)
   }
 
   // A chat opened by send() above carries its first message in the navigation state.
@@ -273,6 +282,7 @@ function ChatThread({ agent, sessionId, providerName, modelName }) {
         <MessageList
           messages={shownMessages}
           onSendForm={send}
+          onDecide={decide}
           formDisabled={isStreaming || agent.status !== 'live' || !hasKey}
           streamingText={streamingText}
           streamingTools={streamingTools}

@@ -34,12 +34,14 @@ def _tool_error(error: Exception) -> str:
 
 
 def _after_tools(state: MessagesState) -> str:
-    """Back to the model, unless it has just asked the user for details: then the turn is
-    over and the user's reply starts the next one."""
+    """Back to the model, unless it has just asked the user something (details for a search,
+    or approval for an action): then the turn is over and the user's answer starts the next one."""
     for message in reversed(state["messages"]):
         if not isinstance(message, ToolMessage):
             break
         if message.name == ASK_TOOL and message.status != "error":
+            return END
+        if isinstance(message.artifact, dict) and "approval" in message.artifact:
             return END
     return AGENT_NODE
 

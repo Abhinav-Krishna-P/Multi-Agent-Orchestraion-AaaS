@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { ApprovalCard } from './ApprovalCard'
 import { ResultCards } from './cards'
 import { DetailsCard } from './DetailsCard'
 import { Sources } from './Sources'
@@ -57,6 +58,8 @@ export const Message = memo(function Message({
   formActive = false,
   formDisabled = false,
   onSendForm,
+  approval,
+  onDecide,
   streaming = false,
 }) {
   if (role === 'user') {
@@ -94,6 +97,9 @@ export const Message = memo(function Message({
           )
         )}
         <ResultCards tools={tools} />
+        {approval && (
+          <ApprovalCard approval={approval} active={formActive} disabled={formDisabled} onDecide={onDecide} />
+        )}
         <Sources sources={sources} />
         {/* Only the newest reply's form can be used; an older request for details is just noted. */}
         {form && formActive && <DetailsForm form={form} disabled={formDisabled} onSend={onSendForm} />}

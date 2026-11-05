@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 # Saved as the reply when the user stops after results arrived but before any text was written.
 STOPPED_TEXT = "Stopped before I wrote a reply. What I had found is below."
+APPROVAL_TEXT = "This needs your approval before I do it."
 MODEL_ERROR_MESSAGE = "The model couldn't reply. Check your API key and try again."
 
 _in_flight: set[uuid.UUID] = set()
@@ -89,12 +90,13 @@ async def _recent_history(session_id: uuid.UUID) -> list[Message]:
 
 
 async def _save_reply(
-    session_id: uuid.UUID, text: str, tools: list[dict], sources: list[dict], form: dict | None = None
+    session_id: uuid.UUID, text: str, tools: list[dict], sources: list[dict], form: dict | None = None,
+    approval: dict | None = None,
 ) -> uuid.UUID:
     async with session_factory() as db:
         message = Message(
             session_id=session_id, role="assistant", content=text, tool_calls=tools or None,
-            sources=sources or None, form=form,
+            sources=sources or None, form=form, approval=approval,
         )
         db.add(message)
         await db.execute(update(ChatSession).where(ChatSession.id == session_id).values(last_message_at=func.now()))
@@ -138,6 +140,7 @@ async def run_turn(
     labels: dict[str, str] | None = None,
     extra_instruction: str | None = None,
     forms: dict | None = None,
+    prior_tools: Sequence[dict] = (),
 ) -> AsyncIterator[str]:
     """Answers the chat's last user message. The caller holds the chat's claim (try_begin).
 
@@ -149,12 +152,19 @@ async def run_turn(
     calls: dict[str, tuple[str, dict]] = {}  # tool call id -> (tool name, arguments)
     asked: dict | None = None  # the form the agent asked the user to fill in
     refine: dict | None = None  # the form offered after a search that has filters
+    approval: dict | None = None  # an action waiting for the user's approval (one per reply)
     parts: list[str] = []
     used: dict[str, dict] = {}  # tool call id -> {label, ok}, in the order the model asked
     sources: list[dict] = []
     rounds = 0
     settled = False  # the reply was saved, or its failure was reported
     try:
+        # An action the user just approved ran before this reply: it is shown as its first tool.
+        for index, tool in enumerate(prior_tools):
+            tool_id = f"approved-{index}"
+            used[tool_id] = dict(tool)
+            yield sse("tool_start", {"id": tool_id, "label": tool["label"]})
+            yield sse("tool_end", {"id": tool_id, "ok": tool["ok"]})
         history = await _recent_history(session_id)
         graph = build_graph(model, tools)
         stream = graph.astream(
@@ -195,6 +205,8 @@ async def run_turn(
                             sources.extend(message.artifact)
                         elif isinstance(message.artifact, dict) and "form" in message.artifact:
                             asked = message.artifact["form"]
+                        elif isinstance(message.artifact, dict) and "approval" in message.artifact:
+                            approval = approval or message.artifact["approval"]
                         # A card is the tool's result drawn for the user: sent now, saved with the reply.
                         card = message.artifact.get("card") if isinstance(message.artifact, dict) else None
                         if card and message.tool_call_id in used:
@@ -203,18 +215,21 @@ async def run_turn(
                         if ok and name in forms:
                             refine = form_spec(forms[name], arguments, "refine")
                         yield sse("tool_end", {"id": message.tool_call_id, "ok": ok, **({"card": card} if card else {})})
-        if not parts and asked:
-            # The model asked with a form and wrote nothing itself: say why the form is there.
-            parts.append(DEFAULT_ASK_TEXT)
-            yield sse("token", {"text": DEFAULT_ASK_TEXT})
+        if not parts and (asked or approval):
+            # The model asked with a form or for approval and wrote nothing itself: say why.
+            default = DEFAULT_ASK_TEXT if asked else APPROVAL_TEXT
+            parts.append(default)
+            yield sse("token", {"text": default})
         text = "".join(parts)
         if not text:
             raise RuntimeError("empty reply")
-        message_id = await _save_reply(session_id, text, list(used.values()), sources, asked or refine)
+        message_id = await _save_reply(session_id, text, list(used.values()), sources, asked or refine, approval)
         settled = True
         _spawn(_update_summary(session_id))
         if sources:
             yield sse("sources", {"sources": sources})
+        if approval:
+            yield sse("approval_required", {"approval": approval})
         yield sse("done", {"message_id": str(message_id)})
     except Exception as exc:
         # Only the exception type is logged: provider errors can carry request details.

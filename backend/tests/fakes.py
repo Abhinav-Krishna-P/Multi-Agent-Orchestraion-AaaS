@@ -18,7 +18,7 @@ def _chunk(content: Any, index: int, call_number: int) -> AIMessageChunk:
                     "name": content["tool"],
                     "args": json.dumps(content["args"]),
                     "id": f"call_{call_number}_{index}",
-                    "index": 0,
+                    "index": index,  # calls in one reply stay separate
                 }
             ],
         )

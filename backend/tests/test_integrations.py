@@ -18,7 +18,9 @@ def _tool(slug, *tags, deprecated=False):
 
 GMAIL_TOOLS = [
     _tool("GMAIL_FETCH_EMAILS", "important", "readOnlyHint"),
-    _tool("GMAIL_SEND_EMAIL", "important"),
+    {**_tool("GMAIL_SEND_EMAIL", "important"), "input_parameters": {"type": "object", "required": ["recipient_email", "body"], "properties": {
+        "recipient_email": {"type": "string", "title": "Recipient Email"}, "subject": {"type": "string", "title": "Subject"},
+        "body": {"type": "string"}}}},
     _tool("GMAIL_DELETE_MESSAGE", "important", "destructiveHint"),
     _tool("GMAIL_LIST_LABELS", "readOnlyHint"),
     _tool("GMAIL_OLD_SEARCH", "important", "readOnlyHint", deprecated=True),
@@ -80,7 +82,8 @@ async def test_actions_offers_only_important_read_actions(composio):
     from app.integrations.composio import actions
 
     offered = await actions("gmail")
-    assert [action["slug"] for action in offered] == ["GMAIL_FETCH_EMAILS"]
+    # Reads, and actions that change things (offered as "write"); never destructive ones.
+    assert [(action["slug"], action["kind"]) for action in offered] == [("GMAIL_FETCH_EMAILS", "read"), ("GMAIL_SEND_EMAIL", "write")]
     assert offered[0]["name"] == "Gmail Fetch Emails" and offered[0]["description"] == "Does GMAIL_FETCH_EMAILS."
     assert offered[0]["parameters"]["properties"] == {"query": {"type": "string"}}
     assert composio.last_request.headers["x-api-key"] == "test-composio-key"

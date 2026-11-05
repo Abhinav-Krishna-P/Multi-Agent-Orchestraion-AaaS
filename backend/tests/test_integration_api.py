@@ -50,8 +50,10 @@ async def test_connect_then_refresh_then_choose_actions(client, user_a, composio
     composio.status = "ACTIVE"
     connected = (await client.post(f"{base}/refresh", headers=user_a)).json()
     assert connected["status"] == "active"
-    assert connected["actions"] == [{"slug": "GMAIL_FETCH_EMAILS", "name": "Gmail Fetch Emails",
-                                     "description": "Does GMAIL_FETCH_EMAILS.", "on": False}]
+    assert connected["actions"] == [
+        {"slug": "GMAIL_FETCH_EMAILS", "name": "Gmail Fetch Emails", "description": "Does GMAIL_FETCH_EMAILS.", "kind": "read", "on": False},
+        {"slug": "GMAIL_SEND_EMAIL", "name": "Gmail Send Email", "description": "Does GMAIL_SEND_EMAIL.", "kind": "write", "on": False},
+    ]
 
     saved = (await client.put(f"{base}/actions", json={"actions": ["GMAIL_FETCH_EMAILS"]}, headers=user_a)).json()
     assert saved["actions"][0]["on"] is True
@@ -59,10 +61,12 @@ async def test_connect_then_refresh_then_choose_actions(client, user_a, composio
     assert entry(listing)["actions"][0]["on"] is True
 
 
-async def test_only_offered_read_actions_can_be_switched_on(client, user_a, composio):  # noqa: F811
+async def test_only_offered_actions_can_be_switched_on(client, user_a, composio):  # noqa: F811
     agent = await create_agent(client, user_a)
     await connect(client, user_a, agent["id"])
-    for slug in ("GMAIL_SEND_EMAIL", "GMAIL_DELETE_MESSAGE", "NOT_A_REAL_ACTION"):
+    r = await client.put(f"/agents/{agent['id']}/integrations/gmail/actions", json={"actions": ["GMAIL_SEND_EMAIL"]}, headers=user_a)
+    assert r.status_code == 200  # changes things: offered, and asks before each use
+    for slug in ("GMAIL_DELETE_MESSAGE", "GMAIL_LIST_LABELS", "NOT_A_REAL_ACTION"):
         r = await client.put(f"/agents/{agent['id']}/integrations/gmail/actions", json={"actions": [slug]}, headers=user_a)
         assert r.status_code == 422, slug
 

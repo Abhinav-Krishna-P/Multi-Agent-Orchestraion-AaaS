@@ -60,9 +60,9 @@ async def _call(method: str, path: str, *, params: dict | None = None, json: dic
 
 
 async def actions(app: str) -> list[dict]:
-    """The app's actions the platform offers: the ones Composio marks as the useful ones, and
-    of those only the ones that read. Actions that change or delete something are held back
-    until they can be approved one by one."""
+    """The app's actions the platform offers: the ones Composio marks as the useful ones.
+    Each is a `read` (runs straight away) or a `write` (changes something, so it waits for the
+    user's approval each time). Actions that delete are never offered."""
     found, cursor = [], None
     for _ in range(MAX_PAGES):
         page = await _call("GET", "/tools", params={"toolkit_slug": app, "limit": 200, **({"cursor": cursor} if cursor else {})}, cache=True)
@@ -72,9 +72,10 @@ async def actions(app: str) -> list[dict]:
             break
     return [
         {"slug": tool["slug"], "name": tool.get("name") or tool["slug"], "description": tool.get("description") or "",
-         "parameters": tool.get("input_parameters") or {"type": "object", "properties": {}}}
+         "parameters": tool.get("input_parameters") or {"type": "object", "properties": {}},
+         "kind": "read" if "readOnlyHint" in tool["tags"] else "write"}
         for tool in found
-        if {"important", "readOnlyHint"} <= set(tool.get("tags") or [])
+        if "important" in (tool.get("tags") or [])
         and "destructiveHint" not in tool["tags"]
         and not tool.get("is_deprecated")
         and len(tool["slug"]) <= MAX_ACTION_NAME
@@ -139,7 +140,7 @@ def _as_tool(app: App, action: dict, integration_id, account_id: str, user_id: s
         try:
             data = await run_action(action["slug"], account_id, user_id, arguments)
         except ToolError:
-            if await _stopped_working(integration_id, account_id, user_id):
+            if await stopped_working(integration_id, account_id, user_id):
                 raise ToolError(
                     f"The {app.name} connection has stopped working. Ask the user to reconnect {app.name} "
                     "in the agent's Apps step."
@@ -155,7 +156,35 @@ def _as_tool(app: App, action: dict, integration_id, account_id: str, user_id: s
     )
 
 
-async def _stopped_working(integration_id, account_id: str, user_id: str) -> bool:
+def logo(app: str) -> str:
+    return f"https://logos.composio.dev/api/{app}"
+
+
+def _asks_approval(app: App, action: dict) -> BaseTool:
+    """An action that changes something. Calling it runs nothing: it hands back the request,
+    the reply ends there, and the user approves or rejects it in the chat. Only then, and
+    only from the platform's own record of the request, does it run."""
+    properties = (action["parameters"] or {}).get("properties") or {}
+
+    async def ask(**arguments) -> tuple[str, dict]:
+        return (
+            "The user is now being asked to approve this. Stop here and wait for their answer.",
+            {"approval": {
+                "app": app.slug, "app_name": app.name, "logo": logo(app.slug),
+                "action": action["slug"], "action_name": action["name"], "arguments": arguments,
+                "labels": {name: (properties.get(name) or {}).get("title") or name for name in arguments},
+                "order": [name for name in properties if name in arguments] + [name for name in arguments if name not in properties],
+                "status": "pending",
+            }},
+        )
+
+    return StructuredTool.from_function(
+        coroutine=ask, name=action["slug"].lower(), description=action["description"][:1000] or action["name"],
+        args_schema=action["parameters"], response_format="content_and_artifact", metadata={"approval": True},
+    )
+
+
+async def stopped_working(integration_id, account_id: str, user_id: str) -> bool:
     """After a failed action: is the connection itself dead? If so, record it, so the wizard
     shows Reconnect and the action is no longer offered."""
     try:
@@ -192,7 +221,12 @@ async def build_tools(integrations: Sequence[AgentIntegration], user_id: str) ->
     for row, offered in zip(rows, listed):
         app = APPS[row.app]
         for slug in row.actions:
-            if slug in offered:  # an action Composio has since withdrawn is quietly dropped
+            if slug not in offered:  # an action Composio has since withdrawn is quietly dropped
+                continue
+            if offered[slug]["kind"] == "write":
+                tools.append(_asks_approval(app, offered[slug]))
+                labels[slug.lower()] = "Asking for your approval…"
+            else:
                 tools.append(_as_tool(app, offered[slug], row.id, row.connected_account_id, user_id))
                 labels[slug.lower()] = f"Using {app.name}…"
     return tools, labels

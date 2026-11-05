@@ -44,11 +44,12 @@ async def _entry(app: composio.App, row: AgentIntegration | None) -> dict:
     actions = []
     if row is not None and row.status == "active":
         actions = [
-            {"slug": action["slug"], "name": action["name"], "description": action["description"], "on": action["slug"] in row.actions}
+            {"slug": action["slug"], "name": action["name"], "description": action["description"],
+             "kind": action["kind"], "on": action["slug"] in row.actions}
             for action in await composio.actions(app.slug)
         ]
     return {
-        "app": app.slug, "name": app.name, "category": app.category, "logo": f"https://logos.composio.dev/api/{app.slug}",
+        "app": app.slug, "name": app.name, "category": app.category, "logo": composio.logo(app.slug),
         "status": row.status if row else "none", "actions": actions,
     }
 

@@ -205,6 +205,9 @@ class Message(Base):
     sources: Mapped[list | None] = mapped_column(JSONB)
     # A details form shown with this reply: {kind: "ask" | "refine", tool, title, fields, values}.
     form: Mapped[dict | None] = mapped_column(JSONB)
+    # An app action waiting for, or given, the user's approval. Holds no account or user ID:
+    # the browser reads it. The account comes from agent_integrations when it runs.
+    approval: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.clock_timestamp(), nullable=False
     )

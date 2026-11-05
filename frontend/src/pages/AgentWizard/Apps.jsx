@@ -21,6 +21,11 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { useConnectApp, useDisconnectApp, useIntegrations, useRefreshApp, useSetAppActions } from '@/lib/queries'
 import { StepFooter } from './StepFooter'
 
+const ACTION_GROUPS = [
+  { kind: 'read', title: 'Reads', note: 'Run straight away. They only look things up.' },
+  { kind: 'write', title: 'Changes things', note: 'The agent asks you before each one, showing exactly what it will do.' },
+]
+
 const STATUS_LINES = {
   none: 'Not connected',
   pending: 'Finish signing in, then come back here',
@@ -95,28 +100,37 @@ function AppCard({ app, busy, onConnect, onRefresh, onToggleAction, onDisconnect
                 </Button>
               </PopoverTrigger>
               <PopoverContent align="end" className="max-h-80 w-80 overflow-y-auto">
-                <p className="mb-1 text-sm font-medium">What may the agent do in {app.name}?</p>
-                <p className="mb-3 text-xs text-muted-foreground">These only read. Nothing here can send, change or delete.</p>
+                <p className="mb-3 text-sm font-medium">What may the agent do in {app.name}?</p>
                 {app.actions.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">This app has no read actions yet.</p>
+                  <p className="text-sm text-muted-foreground">This app has no actions yet.</p>
                 ) : (
-                  <div className="flex flex-col gap-3">
-                    {app.actions.map((action) => (
-                      <div key={action.slug} className="flex items-start gap-2">
-                        <Checkbox
-                          id={`action-${action.slug}`}
-                          checked={action.on}
-                          disabled={busy}
-                          onCheckedChange={(checked) => onToggleAction(action.slug, checked === true)}
-                          className="mt-0.5"
-                        />
-                        <label htmlFor={`action-${action.slug}`} className="cursor-pointer text-sm">
-                          {action.name}
-                          <span className="line-clamp-2 text-xs text-muted-foreground">{action.description}</span>
-                        </label>
-                      </div>
-                    ))}
-                  </div>
+                  ACTION_GROUPS.map((group) => {
+                    const actions = app.actions.filter((action) => action.kind === group.kind)
+                    if (actions.length === 0) return null
+                    return (
+                      <fieldset key={group.kind} className="mb-4 last:mb-0">
+                        <legend className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">{group.title}</legend>
+                        <p className="mb-2 text-xs text-muted-foreground">{group.note}</p>
+                        <div className="flex flex-col gap-3">
+                          {actions.map((action) => (
+                            <div key={action.slug} className="flex items-start gap-2">
+                              <Checkbox
+                                id={`action-${action.slug}`}
+                                checked={action.on}
+                                disabled={busy}
+                                onCheckedChange={(checked) => onToggleAction(action.slug, checked === true)}
+                                className="mt-0.5"
+                              />
+                              <label htmlFor={`action-${action.slug}`} className="cursor-pointer text-sm">
+                                {action.name}
+                                <span className="line-clamp-2 text-xs text-muted-foreground">{action.description}</span>
+                              </label>
+                            </div>
+                          ))}
+                        </div>
+                      </fieldset>
+                    )
+                  })
                 )}
               </PopoverContent>
             </Popover>
@@ -189,8 +203,8 @@ export default function Apps({ agent, onNext, onBack }) {
     <div>
       <h2 className="text-lg font-semibold">Connect your apps</h2>
       <p className="mt-1 text-sm text-muted-foreground">
-        Sign in to the apps this agent may look things up in. A connection belongs to this agent only, and you choose
-        what it may read.
+        Sign in to the apps this agent may use. A connection belongs to this agent only. You choose what it may do, and
+        it asks you before anything that sends, creates or changes.
       </p>
     </div>
   )

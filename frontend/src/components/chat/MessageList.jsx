@@ -20,6 +20,7 @@ export function MessageList({
   emptyHint,
   onSendForm,
   formDisabled,
+  onDecide,
 }) {
   const containerRef = useRef(null)
   const stickRef = useRef(true)
@@ -55,6 +56,8 @@ export function MessageList({
               formActive={index === messages.length - 1 && !isStreaming}
               formDisabled={formDisabled}
               onSendForm={onSendForm}
+              approval={message.approval}
+              onDecide={(decision) => onDecide(message, decision)}
             />
           ))}
           {isStreaming && (

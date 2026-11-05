@@ -1,14 +1,16 @@
+import json
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent import runner
 from app.agent.llm import ModelFactory, get_model_factory, get_user_api_key
 from app.api.deps import get_owned_session
-from app.api.schemas import ChatIn
+from app.api.schemas import ApprovalIn, ChatIn
 from app.api.sessions import agent_not_live
 from app.core.errors import ApiError
 from app.core.llm_catalog import provider_name
@@ -19,7 +21,10 @@ from app.rag.embeddings import Embedder, get_embedder
 from app.rag.retrieve import document_names
 from app.rag.vector_store import VectorStore, get_vector_store
 from app.tools import forms, knowledge_base
-from app.tools.registry import CARDS_INSTRUCTION, REGISTRY, available
+from app.tools.http import ToolError, Unavailable
+
+logger = logging.getLogger(__name__)
+from app.tools.registry import APPROVAL_INSTRUCTION, CARDS_INSTRUCTION, REGISTRY, available
 
 router = APIRouter()
 
@@ -38,6 +43,87 @@ def _new_message_text(body: ChatIn) -> str | None:
     if len(text) > MAX_MESSAGE_LENGTH:
         raise ApiError(422, "invalid_message", "That message is too long. Shorten it and try again.")
     return text
+
+
+MAX_RESULT = 2000  # of an approved action's result, kept for the agent's next reply
+
+
+def _not_pending() -> ApiError:
+    return ApiError(409, "approval_not_pending", "That request isn't waiting for an answer any more.")
+
+
+async def _newest(db: AsyncSession, session_id) -> Message | None:
+    return await db.scalar(
+        select(Message).where(Message.session_id == session_id).order_by(Message.created_at.desc()).limit(1)
+    )
+
+
+async def _run_approved(db: AsyncSession, agent, user_id: str, request: dict) -> dict:
+    """Runs an approved action from the platform's own record of it, if it may still run."""
+    app_name = request["app_name"]
+
+    def failed(reason: str) -> dict:
+        return {"outcome": "failed", "reason": reason}
+
+    if not composio.enabled():
+        return failed("App connections aren't set up on this server.")
+    row = await db.scalar(select(AgentIntegration).where(
+        AgentIntegration.agent_id == agent.id, AgentIntegration.app == request["app"]))
+    if row is None or row.status != "active":
+        return failed(f"{app_name} isn't connected any more.")
+    if request["action"] not in row.actions:
+        return failed("This action isn't switched on any more.")
+    try:
+        offered = {action["slug"]: action for action in await composio.actions(row.app)}
+    except Exception:  # nothing has run yet
+        return failed(f"{app_name}'s actions couldn't be checked right now.")
+    if (offered.get(request["action"]) or {}).get("kind") != "write":
+        return failed("This action isn't available any more.")
+    unknown = {"outcome": "unknown",
+               "reason": f"{app_name} didn't answer in time, so it may or may not have been done. Check {app_name} before trying again."}
+    try:
+        data = await composio.run_action(request["action"], row.connected_account_id, user_id, request["arguments"])
+    except Unavailable:
+        # No proper answer is not a "no": the email may have gone. Saying "failed" would invite a second one.
+        return unknown
+    except ToolError as error:
+        if await composio.stopped_working(row.id, row.connected_account_id, user_id):
+            return failed(f"The {app_name} connection has stopped working. Reconnect it in the agent's Apps step.")
+        return failed(str(error))
+    except Exception as error:  # an answer in a shape we don't know: it may have run
+        logger.warning("An approved action ended unexpectedly: %s", type(error).__name__)
+        return unknown
+    return {"outcome": "done", "result": json.dumps(data, ensure_ascii=False, default=str)[:MAX_RESULT]}
+
+
+async def _decide(db: AsyncSession, session: ChatSession, decision: ApprovalIn) -> list[dict]:
+    """Records the user's answer to the newest message's request, runs the action if approved,
+    and saves the answer as the user's message. Returns the action as the reply's first tool."""
+    last = await _newest(db, session.id)
+    if last is None or last.id != decision.message_id or last.role != "assistant" or (last.approval or {}).get("status") != "pending":
+        raise _not_pending()
+    request, approve = dict(last.approval), decision.decision == "approve"
+    status = "approved" if approve else "rejected"
+    what = f"{request['action_name']} ({request['app_name']})"
+    # Only one answer can win, even from two tabs at once: the row changes only while still pending.
+    claimed = await db.execute(
+        update(Message)
+        .where(Message.id == last.id, Message.approval["status"].astext == "pending")
+        .values(approval={**request, "status": status})
+    )
+    if claimed.rowcount != 1:  # nothing changed, so there is nothing to undo
+        raise _not_pending()
+    # The answer is saved with the claim: if anything stops after this, the chat ends with the
+    # user's message, so Retry is offered, and the record says no outcome was ever written.
+    db.add(Message(session_id=session.id, role="user", content=f"{'Approved' if approve else 'Declined'}: {what}"))
+    session.last_message_at = func.now()
+    await db.commit()
+    if not approve:
+        return []
+    outcome = await _run_approved(db, session.agent, str(session.user_id), request)
+    await db.execute(update(Message).where(Message.id == last.id).values(approval={**request, "status": status, **outcome}))
+    await db.commit()
+    return [{"label": what, "ok": outcome["outcome"] == "done"}]
 
 
 class TurnResponse(StreamingResponse):
@@ -69,7 +155,10 @@ async def chat(
     embedder: Embedder = Depends(get_embedder),
     store: VectorStore = Depends(get_vector_store),
 ):
-    text = _new_message_text(body)
+    deciding = body.approval is not None
+    if deciding and (body.message is not None or body.retry):
+        raise ApiError(422, "invalid_message", "Send either a message or an answer to a request, not both.")
+    text = None if deciding else _new_message_text(body)
     agent = session.agent
     if agent.status != "live":
         raise agent_not_live()
@@ -84,13 +173,18 @@ async def chat(
         raise ApiError(409, "reply_in_progress", "Wait for the current reply to finish.")
 
     try:
-        if text is None:
-            last = await db.scalar(
-                select(Message).where(Message.session_id == session.id).order_by(Message.created_at.desc()).limit(1)
-            )
+        prior_tools = []
+        if deciding:
+            prior_tools = await _decide(db, session, body.approval)
+        elif text is None:
+            last = await _newest(db, session.id)
             if last is None or last.role != "user":
                 raise ApiError(409, "nothing_to_retry", "There's nothing to retry in this chat.")
         else:
+            # Writing a new message instead of answering drops a waiting request.
+            last = await _newest(db, session.id)
+            if last is not None and (last.approval or {}).get("status") == "pending":
+                last.approval = {**last.approval, "status": "skipped"}
             db.add(Message(session_id=session.id, role="user", content=text))
             session.last_message_at = func.now()
             if session.title == DEFAULT_TITLE:
@@ -99,6 +193,7 @@ async def chat(
         # Read everything the stream needs now; the stream uses its own database sessions.
         specs = [REGISTRY[name] for name in agent.tools if name in REGISTRY and available(REGISTRY[name])]
         turn = {
+            "prior_tools": prior_tools,
             "session_id": session.id,
             "system_prompt": agent.system_prompt,
             "summary": session.summary,
@@ -125,6 +220,8 @@ async def chat(
             app_tools, app_labels = await composio.build_tools(connected.all(), str(session.user_id))
             turn["tools"] += app_tools
             turn["labels"] |= app_labels
+            if any((tool.metadata or {}).get("approval") for tool in app_tools):
+                instructions.append(APPROVAL_INSTRUCTION)
         turn["extra_instruction"] = "\n\n".join(instructions) or None
         provider, model_id = agent.llm_provider, agent.llm_model
     except BaseException:

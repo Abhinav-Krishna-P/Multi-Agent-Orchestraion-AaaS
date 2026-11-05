@@ -30,8 +30,13 @@ class ToolError(Exception):
     """A tool failure in words the model can pass on. Never put a key or raw reply in it."""
 
 
+class Unavailable(ToolError):
+    """The service did not answer properly (timeout, connection error, server error). For a
+    call that does something, that means it may or may not have been done."""
+
+
 def unavailable(service: str) -> ToolError:
-    return ToolError(f"{service} could not be reached right now.")
+    return Unavailable(f"{service} could not be reached right now.")
 
 
 def refused(service: str) -> ToolError:

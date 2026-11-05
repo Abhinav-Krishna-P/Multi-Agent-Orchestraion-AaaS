@@ -28,6 +28,14 @@ class ToolSpec:
 
 REGISTRY: dict[str, ToolSpec] = {}
 
+# Added when the agent has app actions that change things.
+APPROVAL_INSTRUCTION = (
+    "Some of your app actions change things (send, create, update). When you use one, the user is "
+    "shown what you are about to do and nothing happens until they approve it. Fill in every detail "
+    "the action needs, ask for one such action at a time, and never say an action was done until a "
+    "platform note on your earlier message says it was."
+)
+
 # Added to the agent's instructions whenever it has tools: their results are drawn as cards.
 CARDS_INSTRUCTION = (
     "The results of your tools are shown to the user as cards under your reply, with each item's photo, "
