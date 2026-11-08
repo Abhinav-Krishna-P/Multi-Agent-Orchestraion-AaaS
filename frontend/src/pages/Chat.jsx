@@ -7,6 +7,7 @@ import { AgentSelect } from '@/components/AgentSelect'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Composer } from '@/components/chat/Composer'
 import { MessageList } from '@/components/chat/MessageList'
+import { ReconnectBar } from '@/components/chat/ReconnectBar'
 import { SessionList } from '@/components/chat/SessionList'
 import {
   AlertDialog,
@@ -117,6 +118,8 @@ function ChatThread({ agent, sessionId, providerName, modelName }) {
     await Promise.all([
       client.invalidateQueries({ queryKey: keys.messages(targetSessionId) }),
       client.invalidateQueries({ queryKey: keys.sessions(agent.id) }),
+      // A connection that broke during the reply shows its Reconnect bar straight away.
+      client.invalidateQueries({ queryKey: keys.integrations(agent.id) }),
     ])
     setIsStreaming(false)
     setStreamingText('')
@@ -248,7 +251,9 @@ function ChatThread({ agent, sessionId, providerName, modelName }) {
     )
   } else {
     footer = (
-      <Composer
+      <>
+        <ReconnectBar agentId={agent.id} />
+        <Composer
         agentName={agent.name}
         value={draft}
         onChange={setDraft}
@@ -258,7 +263,8 @@ function ChatThread({ agent, sessionId, providerName, modelName }) {
         onStop={() => openedRef.current && abortRef.current?.abort()}
         isStreaming={isStreaming}
         disabled={starting || llmKeys.isPending}
-      />
+        />
+      </>
     )
   }
 

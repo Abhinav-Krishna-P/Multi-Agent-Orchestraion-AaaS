@@ -2,6 +2,7 @@
 its tokens. The platform holds one Composio key and, per connection, only Composio's handle."""
 import asyncio
 import logging
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -11,7 +12,7 @@ from sqlalchemy import update
 from app.core.config import get_settings
 from app.db.base import session_factory
 from app.db.models import AgentIntegration
-from app.tools.http import ToolError, fetch_json, wrap
+from app.tools.http import NotFound, ToolError, fetch_json, wrap
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +109,10 @@ async def start_connection(app: str, user_id: str, callback_url: str) -> tuple[s
 
 async def connection_status(account_id: str, user_id: str) -> str:
     """`active`, `pending` (still signing in) or `expired` (anything that needs a new sign-in)."""
-    account = await _call("GET", f"/connected_accounts/{account_id}")
+    try:
+        account = await _call("GET", f"/connected_accounts/{account_id}")
+    except NotFound:
+        return "expired"  # removed at Composio: only a new sign-in brings it back
     if account.get("user_id") != user_id:
         return "expired"  # not this user's connection: never usable here
     status = account.get("status")
@@ -139,11 +143,11 @@ def _as_tool(app: App, action: dict, integration_id, account_id: str, user_id: s
     async def run(**arguments) -> str:
         try:
             data = await run_action(action["slug"], account_id, user_id, arguments)
-        except ToolError:
-            if await stopped_working(integration_id, account_id, user_id):
+        except ToolError as error:
+            if await stopped_working(integration_id, account_id, user_id, str(error)):
                 raise ToolError(
-                    f"The {app.name} connection has stopped working. Ask the user to reconnect {app.name} "
-                    "in the agent's Apps step."
+                    f"The {app.name} connection has stopped working. Ask the user to reconnect {app.name}: "
+                    f"tell them to press the \"Reconnect {app.name}\" button just above the message box."
                 ) from None
             raise
         text = wrap(app.name, data)
@@ -184,14 +188,29 @@ def _asks_approval(app: App, action: dict) -> BaseTool:
     )
 
 
-async def stopped_working(integration_id, account_id: str, user_id: str) -> bool:
-    """After a failed action: is the connection itself dead? If so, record it, so the wizard
-    shows Reconnect and the action is no longer offered."""
-    try:
-        if await connection_status(account_id, user_id) != "expired":
-            return False
-    except ToolError:
-        return False  # Composio can't be asked right now: say nothing about the connection
+# Composio keeps calling a connection ACTIVE after the user revokes its access at Google (seen
+# live, 2026-11-20): only the action's own error says so. These are the sign-in failures.
+_SIGN_IN_ERROR = re.compile(
+    r"refresh(ing)?[ _]the[ _]access[ _]token|refresh[ _]token|invalid[ _]grant|unauthori[sz]ed|\b40[13]\b"
+    r"|invalid (authentication )?credentials|token has been (expired|revoked)|expired or revoked",
+    re.IGNORECASE,
+)
+
+
+def is_sign_in_error(text: str) -> bool:
+    return bool(_SIGN_IN_ERROR.search(text or ""))
+
+
+async def stopped_working(integration_id, account_id: str, user_id: str, error: str = "") -> bool:
+    """After a failed action: is the connection itself dead? Yes if the error is a sign-in
+    failure, or Composio says so. If it is, record it, so the chat and the Apps step show
+    Reconnect and the app's actions are no longer offered."""
+    if not is_sign_in_error(error):
+        try:
+            if await connection_status(account_id, user_id) != "expired":
+                return False
+        except ToolError:
+            return False  # Composio can't be asked right now: say nothing about the connection
     async with session_factory() as db:
         await db.execute(update(AgentIntegration).where(AgentIntegration.id == integration_id).values(status="expired"))
         await db.commit()

@@ -1,4 +1,5 @@
 """The apps an agent is connected to: sign in, choose actions, disconnect."""
+import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, Response
@@ -16,6 +17,7 @@ from app.tools.http import ToolError
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+CHECK_SECONDS = 5  # the most the Apps step or the chat page waits for Composio when it opens
 
 
 class ActionsIn(BaseModel):
@@ -73,6 +75,32 @@ async def list_integrations(agent: Agent = Depends(get_owned_agent), db: AsyncSe
         return {"enabled": True, "apps": [await _entry(app, rows.get(app.slug)) for app in composio.APPS.values()]}
     except ToolError as error:
         raise _unavailable() from error
+
+
+@router.post("/agents/{agent_id}/integrations/check")
+async def check_connections(agent: Agent = Depends(get_owned_agent), db: AsyncSession = Depends(get_db)) -> dict:
+    """Asks Composio about each of the agent's connections, together and briefly, and saves
+    any change, so a connection that broke since is shown as needing a reconnect."""
+    if not composio.enabled():
+        return {"enabled": False, "apps": []}
+    rows = [row for row in await db.scalars(select(AgentIntegration).where(AgentIntegration.agent_id == agent.id))
+            if row.status in ("active", "expired")]
+
+    async def status_of(row) -> str | None:
+        try:
+            return await composio.connection_status(row.connected_account_id, str(agent.user_id))
+        except Exception:
+            return None  # can't tell: leave it as it was
+
+    try:
+        found = await asyncio.wait_for(asyncio.gather(*(status_of(row) for row in rows)), CHECK_SECONDS)
+    except TimeoutError:
+        found = [None] * len(rows)
+    for row, status in zip(rows, found):
+        if status in ("active", "expired"):
+            row.status = status
+    await db.commit()
+    return await list_integrations(agent, db)
 
 
 @router.post("/agents/{agent_id}/integrations/{app}/connect")

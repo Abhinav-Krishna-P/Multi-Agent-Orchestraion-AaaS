@@ -1,8 +1,7 @@
 import { Blocks, Loader2, Search, TriangleAlert } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { toast } from 'sonner'
 import { CardImage } from '@/components/chat/cards/shared'
-import { safeUrl } from '@/components/chat/cards/format'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -18,7 +17,8 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useConnectApp, useDisconnectApp, useIntegrations, useRefreshApp, useSetAppActions } from '@/lib/queries'
+import { useAppSignIn, useCheckAppsOnOpen } from '@/lib/appSignIn'
+import { useDisconnectApp, useIntegrations, useSetAppActions } from '@/lib/queries'
 import { StepFooter } from './StepFooter'
 
 const ACTION_GROUPS = [
@@ -143,51 +143,14 @@ function AppCard({ app, busy, onConnect, onRefresh, onToggleAction, onDisconnect
 
 export default function Apps({ agent, onNext, onBack }) {
   const integrations = useIntegrations(agent.id)
-  const connect = useConnectApp(agent.id)
-  const refresh = useRefreshApp(agent.id)
   const setActions = useSetAppActions(agent.id)
   const disconnect = useDisconnectApp(agent.id)
   const [query, setQuery] = useState('')
   const [toDisconnect, setToDisconnect] = useState(null)
 
   const apps = integrations.data?.apps ?? []
-  const pending = apps.filter((app) => app.status === 'pending').map((app) => app.app).join(',')
-  const refreshApp = refresh.mutate
-
-  // The sign-in happens in another window. When it says it is done, or the user comes back
-  // to this one, ask the server whether each unfinished sign-in went through.
-  useEffect(() => {
-    if (!pending) return undefined
-    const check = () => pending.split(',').forEach((app) => refreshApp(app))
-    const onMessage = (event) => {
-      if (event.origin === window.location.origin && event.data?.type === 'app-connected') check()
-    }
-    window.addEventListener('message', onMessage)
-    window.addEventListener('focus', check)
-    return () => {
-      window.removeEventListener('message', onMessage)
-      window.removeEventListener('focus', check)
-    }
-  }, [pending, refreshApp])
-
-  function startConnect(app) {
-    // Opened right away, on the click itself, so the browser doesn't block it as a pop-up.
-    const popup = window.open('', '_blank', 'width=620,height=760')
-    connect.mutate(app.app, {
-      onSuccess: ({ redirect_url }) => {
-        const url = safeUrl(redirect_url)
-        if (!url) {
-          popup?.close()
-          toast.error(`${app.name} couldn't start its sign-in. Try again.`)
-        } else if (popup) popup.location.href = url
-        else window.location.href = url // pop-ups are blocked: sign in in this tab instead
-      },
-      onError: (error) => {
-        popup?.close()
-        toast.error(error.message)
-      },
-    })
-  }
+  const { connect, refresh, startConnect } = useAppSignIn(agent.id, apps)
+  useCheckAppsOnOpen(agent.id) // a connection that broke since last time shows Reconnect
 
   function toggleAction(app, slug, on) {
     const chosen = app.actions.filter((action) => (action.slug === slug ? on : action.on)).map((action) => action.slug)

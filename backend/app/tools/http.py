@@ -35,6 +35,11 @@ class Unavailable(ToolError):
     call that does something, that means it may or may not have been done."""
 
 
+class NotFound(ToolError):
+    """The service answered 404. It reads like any other outage to the model, but callers that
+    look something up by its ID (a connection, say) can tell that the thing is gone."""
+
+
 def unavailable(service: str) -> ToolError:
     return Unavailable(f"{service} could not be reached right now.")
 
@@ -72,6 +77,9 @@ async def fetch_json(
         if response.status_code in (400, 422):
             logger.warning("%s refused the request: status %s", service, response.status_code)
             raise refused(service)
+        if response.status_code == 404:
+            logger.warning("%s call failed: status 404", service)
+            raise NotFound(f"{service} could not be reached right now.")
         problem = f"status {response.status_code}" if response.status_code >= 400 else None
         data = None if problem else response.json()
     except httpx.HTTPError as error:

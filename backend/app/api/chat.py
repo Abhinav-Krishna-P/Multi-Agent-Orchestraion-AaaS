@@ -24,7 +24,7 @@ from app.tools import forms, knowledge_base
 from app.tools.http import ToolError, Unavailable
 
 logger = logging.getLogger(__name__)
-from app.tools.registry import APPROVAL_INSTRUCTION, CARDS_INSTRUCTION, REGISTRY, available
+from app.tools.registry import APPROVAL_INSTRUCTION, CARDS_INSTRUCTION, REGISTRY, available, reconnect_instruction
 
 router = APIRouter()
 
@@ -87,7 +87,7 @@ async def _run_approved(db: AsyncSession, agent, user_id: str, request: dict) ->
         # No proper answer is not a "no": the email may have gone. Saying "failed" would invite a second one.
         return unknown
     except ToolError as error:
-        if await composio.stopped_working(row.id, row.connected_account_id, user_id):
+        if await composio.stopped_working(row.id, row.connected_account_id, user_id, str(error)):
             return failed(f"The {app_name} connection has stopped working. Reconnect it in the agent's Apps step.")
         return failed(str(error))
     except Exception as error:  # an answer in a shape we don't know: it may have run
@@ -215,9 +215,11 @@ async def chat(
             instructions.append(knowledge_base.kb_instruction(ready_documents, strict=agent.kb_strict))
         # The actions of the apps this agent is connected to. The account each runs on is bound here.
         if composio.enabled():
-            connected = await db.scalars(select(AgentIntegration).where(
-                AgentIntegration.agent_id == agent.id, AgentIntegration.status == "active"))
-            app_tools, app_labels = await composio.build_tools(connected.all(), str(session.user_id))
+            connected = (await db.scalars(select(AgentIntegration).where(AgentIntegration.agent_id == agent.id))).all()
+            broken = [composio.APPS[row.app].name for row in connected if row.status == "expired" and row.app in composio.APPS]
+            if broken:  # so the agent explains, instead of saying it has no such app
+                instructions.append(reconnect_instruction(broken))
+            app_tools, app_labels = await composio.build_tools(connected, str(session.user_id))
             turn["tools"] += app_tools
             turn["labels"] |= app_labels
             if any((tool.metadata or {}).get("approval") for tool in app_tools):

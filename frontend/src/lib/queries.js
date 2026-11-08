@@ -209,3 +209,12 @@ export function useSetAppActions(agentId) {
 export function useDisconnectApp(agentId) {
   return useIntegrationMutation(agentId, (app) => api(`/agents/${agentId}/integrations/${app}`, { method: 'DELETE' }))
 }
+
+/** Asks Composio whether the agent's connections still work, and keeps the answer. */
+export function useCheckApps(agentId) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: () => api(`/agents/${agentId}/integrations/check`, { method: 'POST' }),
+    onSuccess: (listing) => client.setQueryData(keys.integrations(agentId), listing),
+  })
+}

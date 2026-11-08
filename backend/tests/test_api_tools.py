@@ -30,7 +30,8 @@ class Service:
         if isinstance(reply, httpx.Response):
             return reply
         if callable(reply):
-            return httpx.Response(200, json=reply(request))
+            result = reply(request)  # a stand-in may answer with any status
+            return result if isinstance(result, httpx.Response) else httpx.Response(200, json=result)
         return httpx.Response(200, json=reply if reply is not None else {})
 
     @property

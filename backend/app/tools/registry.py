@@ -36,6 +36,16 @@ APPROVAL_INSTRUCTION = (
     "platform note on your earlier message says it was."
 )
 
+def reconnect_instruction(names: list[str]) -> str:
+    """Added while some of the agent's apps have a broken connection."""
+    return (
+        f"These connected apps need reconnecting: {', '.join(names)}. Their connection has stopped working, so "
+        "you cannot use them now. If the user asks for something that needs one, tell them to press the "
+        "\"Reconnect\" button for it just above the message box (use those words; there is no settings page "
+        "for this). Never say you used them."
+    )
+
+
 # Added to the agent's instructions whenever it has tools: their results are drawn as cards.
 CARDS_INSTRUCTION = (
     "The results of your tools are shown to the user as cards under your reply, with each item's photo, "
