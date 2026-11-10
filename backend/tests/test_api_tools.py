@@ -307,9 +307,20 @@ async def test_web_search(web):
         "organic_results": [{"title": f"T{i}", "link": f"https://x/{i}", "snippet": f"S{i}", "position": i, "favicon": "f"} for i in range(8)],
     }
     data = data_of(await run("web_search", query="capital of australia"))
-    assert web.params() == {"engine": "google", "q": "capital of australia", "gl": "in", "num": "5", "api_key": "test-serpapi-key"}
+    assert web.params() == {"engine": "google", "q": "capital of australia", "gl": "in", "google_domain": "google.co.in",
+                            "num": "5", "api_key": "test-serpapi-key"}
     assert data["answer"] == "Canberra" and len(data["results"]) == 5
     assert data["results"][0] == {"title": "T0", "link": "https://x/0", "snippet": "S0"}
+
+
+async def test_web_search_uses_the_countrys_own_google(web):
+    """Indian results asked of google.com can come back as junk ("best time to visit Munnar"
+    gave pages about the word "time"); google.co.in answers it properly."""
+    web.replies["serpapi.com"] = {"organic_results": [{"title": "T", "link": "https://x", "snippet": "S"}]}
+    await run("web_search", query="q", country="GB")
+    assert web.params()["google_domain"] == "google.co.uk"
+    await run("web_search", query="q", country="us")
+    assert "google_domain" not in web.params()  # google.com is SerpApi's default
 
 
 async def test_serpapi_empty_and_error_replies(web):

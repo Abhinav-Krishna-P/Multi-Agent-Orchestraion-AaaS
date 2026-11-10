@@ -218,3 +218,18 @@ export function useCheckApps(agentId) {
     onSuccess: (listing) => client.setQueryData(keys.integrations(agentId), listing),
   })
 }
+
+// --- Analytics ------------------------------------------------------------------------------
+
+/** One agent's numbers for a period ("7d", "30d", "90d"), read from PostHog by the backend. */
+export function useAnalytics(agentId, range) {
+  return useQuery({
+    queryKey: ['analytics', agentId, range],
+    // Days are counted in the viewer's own time zone.
+    queryFn: () => {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+      return api(`/agents/${agentId}/analytics?range=${range}&tz=${encodeURIComponent(tz)}`)
+    },
+    enabled: Boolean(agentId),
+  })
+}

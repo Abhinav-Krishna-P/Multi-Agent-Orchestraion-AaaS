@@ -5,6 +5,7 @@ import uuid
 
 from sqlalchemy import update
 
+from app.analytics import posthog
 from app.db.base import session_factory
 from app.db.models import Document, DocumentChunk
 from app.rag.chunking import split
@@ -35,8 +36,13 @@ def chunk_metadata(document: Document, chunk_index: int, page: int | None) -> di
 
 async def _fail(document_id: uuid.UUID, reason: str) -> None:
     async with session_factory() as db:
-        await db.execute(update(Document).where(Document.id == document_id).values(status="failed", error=reason))
+        failed = (await db.execute(
+            update(Document).where(Document.id == document_id).values(status="failed", error=reason)
+            .returning(Document.user_id, Document.agent_id, Document.source_type)
+        )).first()
         await db.commit()
+    if failed:
+        posthog.capture("document_ingested", failed.user_id, agent_id=failed.agent_id, source_type=failed.source_type, status="failed")
 
 
 async def _discard_vectors(store: VectorStore, document_id: uuid.UUID) -> None:
@@ -81,6 +87,8 @@ async def ingest_document(document_id: uuid.UUID, data: bytes, *, embedder: Embe
             current.error = None
             current.chunk_count = len(chunks)
             await db.commit()
+            posthog.capture("document_ingested", current.user_id, agent_id=current.agent_id,
+                            source_type=current.source_type, chunk_count=len(chunks), status="ready")
     except DocumentError as error:
         await _fail(document_id, str(error))
     except VectorStoreUnavailable:

@@ -27,7 +27,7 @@ async def test_no_answer_from_the_app_is_not_called_a_failure(client, user_a, li
     assert read_events(r.text)[-1][0] == "done"
     approval = (await saved_rows(db, session["id"]))[1].approval
     assert approval["outcome"] == "unknown" and "Check Gmail before trying again" in approval["reason"]
-    assert "the platform does not know whether it was done" in model.received[0][2].content
+    assert "the platform does not know whether it was done" in model.received[0][0].content
 
 
 async def test_an_unexpected_reply_still_records_an_outcome(client, user_a, live_chat, use_model, composio, db):  # noqa: F811
@@ -62,7 +62,7 @@ async def test_a_crash_after_the_claim_leaves_a_retryable_chat(client, user_a, l
     use_model(model)
     r = await send(client, user_a, session["id"], {"retry": True})
     assert read_events(r.text)[-1][0] == "done"
-    assert "the platform has no record of whether it was done" in model.received[0][2].content
+    assert "the platform has no record of whether it was done" in model.received[0][0].content
     assert executed(composio) == []
 
 
@@ -96,5 +96,5 @@ async def test_the_model_sees_the_details_it_proposed(client, user_a, live_chat,
     model = scripted(["Okay."])
     use_model(model)
     await decide(client, user_a, session, message_id, "reject")
-    note = model.received[0][2].content
+    note = model.received[0][0].content
     assert "Details you proposed: Recipient Email: me@example.com, Subject: Hi, body: Hello from the agent." in note

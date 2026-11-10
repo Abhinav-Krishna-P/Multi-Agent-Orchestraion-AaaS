@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from langchain_core.tools import BaseTool, StructuredTool
 from sqlalchemy import update
 
+from app.analytics import posthog
 from app.core.config import get_settings
 from app.db.base import session_factory
 from app.db.models import AgentIntegration
@@ -156,7 +157,7 @@ def _as_tool(app: App, action: dict, integration_id, account_id: str, user_id: s
 
     return StructuredTool.from_function(
         coroutine=run, name=action["slug"].lower(), description=action["description"][:1000] or action["name"],
-        args_schema=action["parameters"],
+        args_schema=action["parameters"], metadata={"app": app.slug},
     )
 
 
@@ -184,7 +185,7 @@ def _asks_approval(app: App, action: dict) -> BaseTool:
 
     return StructuredTool.from_function(
         coroutine=ask, name=action["slug"].lower(), description=action["description"][:1000] or action["name"],
-        args_schema=action["parameters"], response_format="content_and_artifact", metadata={"approval": True},
+        args_schema=action["parameters"], response_format="content_and_artifact", metadata={"approval": True, "app": app.slug},
     )
 
 
@@ -212,8 +213,15 @@ async def stopped_working(integration_id, account_id: str, user_id: str, error: 
         except ToolError:
             return False  # Composio can't be asked right now: say nothing about the connection
     async with session_factory() as db:
-        await db.execute(update(AgentIntegration).where(AgentIntegration.id == integration_id).values(status="expired"))
+        changed = (await db.execute(
+            update(AgentIntegration)
+            .where(AgentIntegration.id == integration_id, AgentIntegration.status != "expired")
+            .values(status="expired")
+            .returning(AgentIntegration.user_id, AgentIntegration.agent_id, AgentIntegration.app)
+        )).first()
         await db.commit()
+    if changed:  # counted when it breaks, not each time it is found broken
+        posthog.capture("connection_expired", changed.user_id, agent_id=changed.agent_id, app=changed.app)
     return True
 
 

@@ -13,6 +13,10 @@ URL = "https://serpapi.com/search.json"
 # The marketplace used when the user does not name one, by the platform's default country.
 _AMAZON_DOMAINS = {"in": "amazon.in", "us": "amazon.com", "uk": "amazon.co.uk", "gb": "amazon.co.uk",
                    "ca": "amazon.ca", "de": "amazon.de", "ae": "amazon.ae", "au": "amazon.com.au"}
+# A country's results asked of google.com can come back as junk; its own Google answers properly.
+# shortcut: common countries only, the rest use google.com; add a country when it is needed.
+_GOOGLE_DOMAINS = {"in": "google.co.in", "uk": "google.co.uk", "gb": "google.co.uk", "ca": "google.ca", "au": "google.com.au",
+                   "ae": "google.ae", "de": "google.de", "fr": "google.fr", "sg": "google.com.sg", "jp": "google.co.jp"}
 _AMAZON_SORT = {"price_low_to_high": "price-asc-rank", "price_high_to_low": "price-desc-rank",
                 "rating": "review-rank", "newest": "date-desc-rank"}
 
@@ -33,7 +37,8 @@ async def web_search(query: str, country: str | None = None) -> tuple[str, dict 
     """Search the web with Google for current information, facts, websites or anything not
     covered by a more specific tool. `country` is a two-letter code such as "in" or "us"."""
     service = "Google Search"
-    data = await search(service, "google", q=query.strip(), gl=(country or get_settings().default_country).lower(), num=MAX_RESULTS)
+    gl = (country or get_settings().default_country).lower()
+    data = await search(service, "google", q=query.strip(), gl=gl, google_domain=_GOOGLE_DOMAINS.get(gl), num=MAX_RESULTS)
     found = (data.get("organic_results") or [])[:MAX_RESULTS]
     if not found and not data.get("answer_box"):
         return no_results(service)

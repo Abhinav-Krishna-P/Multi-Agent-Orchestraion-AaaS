@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analytics import posthog
 from app.api.deps import get_owned_agent, get_owned_session
 from app.api.schemas import MessageOut, SessionDetailOut, SessionOut
 from app.core.errors import ApiError
@@ -31,6 +32,7 @@ async def create_session(agent: Agent = Depends(get_owned_agent), db: AsyncSessi
     db.add(session)
     await db.commit()
     await db.refresh(session)
+    posthog.capture("session_started", agent.user_id, agent_id=agent.id, session_id=session.id)
     return session
 
 

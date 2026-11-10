@@ -83,9 +83,24 @@ def test_history_carries_the_note():
         SimpleNamespace(role="user", content="the second one?"),
     ]
     messages = build_messages("P", None, history)
-    assert messages[2].content.startswith("Here are some.\n\n[Shown to the user as cards: 1. Buds A")
-    assert messages[3].content == "An old row."
+    # The note sits in the instructions, never in the model's own replies: a model shown its past
+    # replies ending in notes copies them, writing made-up card lists instead of calling tools.
+    assert messages[2].content == "Here are some." and messages[3].content == "An old row."
+    assert '- Your reply to "earbuds?": [Shown to the user as cards: 1. Buds A' in messages[0].content
+    assert messages[0].content.startswith("P\n\n") and messages[0].content.count("Your reply to") == 1
     assert messages[1].content == "earbuds?" and messages[4].content == "the second one?"
+    assert build_messages("P", None, history[:1])[0].content == "P"  # no notes, no notes section
+
+
+def test_a_note_the_model_wrote_itself_is_dropped_from_history():
+    from types import SimpleNamespace
+
+    from app.agent.context import build_messages
+
+    made_up = "Found some.\n\n[Shown to the user as cards: 1. Book | https://books.google.com/books?id=example1]"
+    history = [SimpleNamespace(role="user", content="books?"), SimpleNamespace(role="assistant", content=made_up),
+               SimpleNamespace(role="user", content="more")]
+    assert build_messages("P", None, history)[2].content == "Found some."
 
 
 async def test_instruction_added_when_the_agent_has_tools(client, user_a, live_chat, use_model):  # noqa: F811

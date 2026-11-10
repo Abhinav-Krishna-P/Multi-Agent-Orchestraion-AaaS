@@ -35,6 +35,8 @@ os.environ["LANGSMITH_TRACING"] = "false"
 os.environ["CHUNKING_METHOD"] = "recursive"
 os.environ["DEFAULT_COUNTRY"] = "in"
 os.environ["DEFAULT_CURRENCY"] = "INR"
+for _name in ("POSTHOG_API_KEY", "POSTHOG_PERSONAL_API_KEY", "POSTHOG_PROJECT_ID"):  # tests never send an event
+    os.environ[_name] = ""
 for _name in ("SERPAPI", "SERPER", "FINNHUB", "COMPOSIO"):  # stand-in keys: tests never reach a real service
     os.environ[f"{_name}_API_KEY"] = f"test-{_name.lower()}-key"
 

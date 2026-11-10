@@ -6,6 +6,7 @@ generated so far; a reply that fails keeps nothing, so the user can retry.
 import asyncio
 import json
 import logging
+import time
 import uuid
 from collections.abc import AsyncIterator, Coroutine, Sequence
 
@@ -15,6 +16,7 @@ from langchain_core.tools import BaseTool
 from sqlalchemy import func, select, update
 
 from app.agent.context import HISTORY_LIMIT, build_messages
+from app.analytics import posthog
 from app.agent.graph import AGENT_NODE, MAX_TOOL_ROUNDS, RECURSION_LIMIT, TOOLS_NODE, build_graph
 from app.db.base import session_factory
 from app.db.models import ChatSession, Message
@@ -141,6 +143,7 @@ async def run_turn(
     extra_instruction: str | None = None,
     forms: dict | None = None,
     prior_tools: Sequence[dict] = (),
+    track: dict | None = None,
 ) -> AsyncIterator[str]:
     """Answers the chat's last user message. The caller holds the chat's claim (try_begin).
 
@@ -150,6 +153,12 @@ async def run_turn(
     labels = labels or {}
     forms = forms or {}  # the switched-on tools that have a details form, by name
     calls: dict[str, tuple[str, dict]] = {}  # tool call id -> (tool name, arguments)
+    started: dict[str, float] = {}  # tool call id -> when the model asked for it
+    # For analytics: who and where, and each counted tool's (type, app). Tools not listed
+    # (the details form, actions waiting for approval) are not counted as tool calls.
+    track = track or {}
+    kinds = track.get("tool_kinds") or {}
+    where = {key: track[key] for key in ("agent_id", "session_id") if key in track}
     asked: dict | None = None  # the form the agent asked the user to fill in
     refine: dict | None = None  # the form offered after a search that has filters
     approval: dict | None = None  # an action waiting for the user's approval (one per reply)
@@ -193,6 +202,7 @@ async def run_turn(
                         label = labels.get(tool_call["name"], tool_call["name"])
                         used[tool_call["id"]] = {"label": label, "ok": True}
                         calls[tool_call["id"]] = (tool_call["name"], tool_call["args"])
+                        started[tool_call["id"]] = time.monotonic()
                         yield sse("tool_start", {"id": tool_call["id"], "label": label})
                 elif node == TOOLS_NODE:
                     for message in messages:
@@ -212,6 +222,18 @@ async def run_turn(
                         if card and message.tool_call_id in used:
                             used[message.tool_call_id]["card"] = card
                         name, arguments = calls.get(message.tool_call_id, (None, {}))
+                        if name in kinds and track.get("user_id"):
+                            kind, app = kinds[name]
+                            posthog.capture(
+                                "tool_called", track["user_id"], **where, tool_name=name, tool_type=kind, app=app, success=ok,
+                                # shortcut: tools asked for together share one timing; time each tool if that matters.
+                                duration_ms=int((time.monotonic() - started.get(message.tool_call_id, time.monotonic())) * 1000),
+                            )
+                            if kind == "knowledge_base" and name == "search_knowledge_base":
+                                posthog.capture(
+                                    "knowledge_base_searched", track["user_id"], **where, search_mode=track.get("search_mode"),
+                                    results_count=len(message.artifact) if isinstance(message.artifact, list) else 0,
+                                )
                         if ok and name in forms:
                             refine = form_spec(forms[name], arguments, "refine")
                         yield sse("tool_end", {"id": message.tool_call_id, "ok": ok, **({"card": card} if card else {})})

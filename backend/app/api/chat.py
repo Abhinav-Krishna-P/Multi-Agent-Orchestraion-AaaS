@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 import uuid
 
 from fastapi import APIRouter, Depends
@@ -8,6 +9,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent import runner
+from app.analytics import posthog
 from app.agent.llm import ModelFactory, get_model_factory, get_user_api_key
 from app.api.deps import get_owned_session
 from app.api.schemas import ApprovalIn, ChatIn
@@ -21,6 +23,7 @@ from app.rag.embeddings import Embedder, get_embedder
 from app.rag.retrieve import document_names
 from app.rag.vector_store import VectorStore, get_vector_store
 from app.tools import forms, knowledge_base
+from app.tools.builtin import calculator, get_current_datetime
 from app.tools.http import ToolError, Unavailable
 
 logger = logging.getLogger(__name__)
@@ -45,6 +48,7 @@ def _new_message_text(body: ChatIn) -> str | None:
     return text
 
 
+BUILTIN_TOOLS = {calculator.name, get_current_datetime.name}
 MAX_RESULT = 2000  # of an approved action's result, kept for the agent's next reply
 
 
@@ -103,6 +107,8 @@ async def _decide(db: AsyncSession, session: ChatSession, decision: ApprovalIn) 
     if last is None or last.id != decision.message_id or last.role != "assistant" or (last.approval or {}).get("status") != "pending":
         raise _not_pending()
     request, approve = dict(last.approval), decision.decision == "approve"
+    where = {"agent_id": session.agent_id, "session_id": session.id, "tool_name": str(request.get("action", "")).lower(),
+             "app": request.get("app")}
     status = "approved" if approve else "rejected"
     what = f"{request['action_name']} ({request['app_name']})"
     # Only one answer can win, even from two tabs at once: the row changes only while still pending.
@@ -119,8 +125,13 @@ async def _decide(db: AsyncSession, session: ChatSession, decision: ApprovalIn) 
     session.last_message_at = func.now()
     await db.commit()
     if not approve:
+        posthog.capture("write_action_decision", session.user_id, **where, decision="rejected")
         return []
+    began = time.monotonic()
     outcome = await _run_approved(db, session.agent, str(session.user_id), request)
+    posthog.capture("write_action_decision", session.user_id, **where, decision="approved", outcome=outcome["outcome"])
+    posthog.capture("tool_called", session.user_id, **where, tool_type="composio", success=outcome["outcome"] == "done",
+                    duration_ms=int((time.monotonic() - began) * 1000))
     await db.execute(update(Message).where(Message.id == last.id).values(approval={**request, "status": status, **outcome}))
     await db.commit()
     return [{"label": what, "ok": outcome["outcome"] == "done"}]
@@ -190,6 +201,7 @@ async def chat(
             if session.title == DEFAULT_TITLE:
                 session.title = " ".join(text.split())[:TITLE_LENGTH]
             await db.commit()
+            posthog.capture("message_sent", session.user_id, agent_id=agent.id, session_id=session.id)
         # Read everything the stream needs now; the stream uses its own database sessions.
         specs = [REGISTRY[name] for name in agent.tools if name in REGISTRY and available(REGISTRY[name])]
         turn = {
@@ -225,6 +237,13 @@ async def chat(
             if any((tool.metadata or {}).get("approval") for tool in app_tools):
                 instructions.append(APPROVAL_INSTRUCTION)
         turn["extra_instruction"] = "\n\n".join(instructions) or None
+        # What each tool counts as in analytics. Actions waiting for approval are counted when they run.
+        kinds = {spec.name: ("builtin" if spec.name in BUILTIN_TOOLS else "api", None) for spec in specs}
+        kinds |= {name: ("knowledge_base", None) for name in knowledge_base.LABELS}
+        kinds |= {tool.name: ("composio", tool.metadata["app"]) for tool in turn["tools"]
+                  if (tool.metadata or {}).get("app") and not tool.metadata.get("approval")}
+        turn["track"] = {"user_id": str(session.user_id), "agent_id": str(agent.id), "session_id": str(session.id),
+                         "search_mode": agent.search_mode, "tool_kinds": kinds}
         provider, model_id = agent.llm_provider, agent.llm_model
     except BaseException:
         runner.end(session.id)

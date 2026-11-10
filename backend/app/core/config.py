@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     serpapi_api_key: str = ""
     serper_api_key: str = ""
     finnhub_api_key: str = ""
+    posthog_api_key: str = ""  # the project token (phc_): sends events
+    posthog_host: str = "https://us.i.posthog.com"
+    posthog_project_id: str = ""
+    posthog_personal_api_key: str = ""  # (phx_) reads the numbers back for the Analytics page
     composio_api_key: str = ""  # one key for the whole platform; never sent to the browser
     # Used by searches when the user does not say where: Google country, currency for stays.
     default_country: str = "in"

@@ -38,7 +38,8 @@ export function MessageList({
   const empty = messages.length === 0 && !isStreaming
 
   return (
-    <div ref={containerRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto">
+    <div ref={containerRef} onScroll={onScroll} className="relative min-h-0 flex-1 overflow-y-auto">
+      {/* relative: keeps screen-reader-only labels inside this scroller, or they stretch the page */}
       {empty ? (
         <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">
           {emptyHint}

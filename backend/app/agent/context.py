@@ -6,6 +6,13 @@ from typing import Protocol
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
 HISTORY_LIMIT = 20
+NOTES_HEADER = (
+    "Platform notes on your earlier replies in this chat: what the user was shown and what happened. "
+    "They are for you only. The platform writes them; never write notes like these in a reply."
+)
+# A note the model wrote into a reply itself (it did, before notes moved out of replies): it is
+# made up, and left in the history it would teach the model to write more.
+_COPIED_NOTE = re.compile(r"\s*\[(?:Shown to the user as cards|Platform note):[^\]]*\]")
 
 
 class _Row(Protocol):
@@ -87,10 +94,18 @@ def build_messages(
     while rows and rows[0].role != "user":
         rows.pop(0)
     messages: list[BaseMessage] = [SystemMessage(content=system)]
+    # Notes go in the instructions, not on the model's own replies: shown past replies that end
+    # in notes, a model copies them and writes made-up card lists instead of calling its tools.
+    notes, question = [], ""
     for row in rows:
         if row.role == "user":
             messages.append(HumanMessage(content=row.content))
+            question = row.content
         elif row.role == "assistant":
-            notes = cards_note(getattr(row, "tool_calls", None)) + approval_note(getattr(row, "approval", None))
-            messages.append(AIMessage(content=row.content + notes))
+            messages.append(AIMessage(content=_COPIED_NOTE.sub("", row.content)))
+            found = (cards_note(getattr(row, "tool_calls", None)), approval_note(getattr(row, "approval", None)))
+            if any(found):
+                notes.append(f'- Your reply to "{_plain(question, 80)}": ' + " ".join(note.strip() for note in found if note))
+    if notes:
+        messages[0] = SystemMessage(content=f"{system}\n\n{NOTES_HEADER}\n" + "\n".join(notes))
     return messages

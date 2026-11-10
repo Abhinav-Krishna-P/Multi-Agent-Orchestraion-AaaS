@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.analytics import posthog
 from app.api.deps import get_owned_agent
 from app.core.config import get_settings
 from app.core.errors import ApiError, not_found
@@ -98,6 +99,8 @@ async def check_connections(agent: Agent = Depends(get_owned_agent), db: AsyncSe
         found = [None] * len(rows)
     for row, status in zip(rows, found):
         if status in ("active", "expired"):
+            if status == "expired" and row.status != "expired":
+                posthog.capture("connection_expired", agent.user_id, agent_id=agent.id, app=row.app)
             row.status = status
     await db.commit()
     return await list_integrations(agent, db)
@@ -131,7 +134,10 @@ async def refresh(app: str, agent: Agent = Depends(get_owned_agent), db: AsyncSe
     if row is None:
         raise not_found()
     try:
-        row.status = await composio.connection_status(row.connected_account_id, str(agent.user_id))
+        status = await composio.connection_status(row.connected_account_id, str(agent.user_id))
+        if status == "expired" and row.status == "active":
+            posthog.capture("connection_expired", agent.user_id, agent_id=agent.id, app=app)
+        row.status = status
         await db.commit()
         return await _entry(spec, row)
     except ToolError as error:

@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import integrations, agents, chat, documents, llm_keys, me, personas, sessions, tools
+from app.api import analytics, integrations, agents, chat, documents, llm_keys, me, personas, sessions, tools
 from app.core.config import export_tracing_env, get_settings
 from app.core.errors import ApiError, api_error_handler
 from app.rag.ingest import sweep_interrupted_documents
@@ -35,7 +35,7 @@ def create_app() -> FastAPI:
     async def health() -> dict:
         return {"status": "ok"}
 
-    for module in (me, llm_keys, personas, agents, sessions, chat, tools, documents, integrations):
+    for module in (me, llm_keys, personas, agents, sessions, chat, tools, documents, integrations, analytics):
         app.include_router(module.router)
 
     return app
