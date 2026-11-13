@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     database_url: str
     test_database_url: str | None = None
     db_null_pool: bool = False
+    scheduler_enabled: bool = True
 
     supabase_url: str = ""
     supabase_jwt_secret: str | None = None
@@ -42,6 +43,8 @@ class Settings(BaseSettings):
     posthog_project_id: str = ""
     posthog_personal_api_key: str = ""  # (phx_) reads the numbers back for the Analytics page
     composio_api_key: str = ""  # one key for the whole platform; never sent to the browser
+    composio_webhook_secret: str = ""  # signs the events Composio sends to us
+    composio_webhook_id: str = ""  # our webhook subscription at Composio
     # Used by searches when the user does not say where: Google country, currency for stays.
     default_country: str = "in"
     default_currency: str = "INR"

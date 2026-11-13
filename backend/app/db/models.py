@@ -180,6 +180,8 @@ class ChatSession(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False, default="New chat", server_default="New chat")
     summary: Mapped[str | None] = mapped_column(Text)
     summary_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # "chat" or "automation" (a describe conversation); chat lists show only "chat".
+    purpose: Mapped[str] = mapped_column(Text, nullable=False, default="chat", server_default="chat")
     created_at: Mapped[datetime] = _created_at()
     last_message_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -211,3 +213,58 @@ class Message(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.clock_timestamp(), nullable=False
     )
+
+
+class Automation(Base):
+    __tablename__ = "automations"
+    __table_args__ = (
+        CheckConstraint("status in ('active', 'paused', 'error')", name="ck_automations_status"),
+        CheckConstraint("trigger_kind in ('schedule', 'event', 'watch')", name="ck_automations_trigger_kind"),
+        Index("ix_automations_status_next_run", "status", "next_run_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    task: Mapped[str] = mapped_column(Text, nullable=False)
+    trigger_text: Mapped[str] = mapped_column(Text, nullable=False)
+    trigger_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    trigger: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    tools: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
+    # Tool name -> {argument: value}: values every run must use.
+    locked: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="active", server_default="active")
+    status_reason: Mapped[str | None] = mapped_column(Text)
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failure_streak: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("sessions.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class AutomationRun(Base):
+    __tablename__ = "automation_runs"
+    __table_args__ = (
+        CheckConstraint("source in ('schedule', 'event', 'watch', 'test')", name="ck_automation_runs_source"),
+        CheckConstraint("status in ('running', 'succeeded', 'failed')", name="ck_automation_runs_status"),
+        UniqueConstraint("automation_id", "event_key", name="uq_automation_runs_event_key"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    automation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="running", server_default="running")
+    started_at: Mapped[datetime] = _created_at()
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    output: Mapped[str | None] = mapped_column(Text)
+    tool_calls: Mapped[list | None] = mapped_column(JSONB)
+    error: Mapped[str | None] = mapped_column(Text)
+    event: Mapped[dict | None] = mapped_column(JSONB)
+    event_key: Mapped[str | None] = mapped_column(Text)

@@ -86,6 +86,7 @@ class SessionOut(_FromRow):
     agent_id: uuid.UUID
     title: str
     summary: str | None
+    purpose: str
     created_at: datetime
     last_message_at: datetime
 
@@ -131,6 +132,7 @@ class ChatIn(BaseModel):
     message: str | None = None
     retry: bool = False
     approval: ApprovalIn | None = None
+    timezone: str | None = Field(None, max_length=64)  # the browser's, for describing an automation
 
 
 class DocumentOut(_FromRow):

@@ -28,6 +28,10 @@ GMAIL_TOOLS = [
 ]
 
 
+TRIGGER_TYPES = [{"slug": "GMAIL_NEW_GMAIL_MESSAGE", "name": "New Gmail Message", "description": "Fires on new mail.",
+                  "config": {"type": "object", "properties": {"labelIds": {"type": "string"}}}, "extra": "dropped"}]
+
+
 class FakeComposio:
     """Answers the handful of Composio calls the platform makes, and remembers each one."""
 
@@ -40,10 +44,20 @@ class FakeComposio:
         self.result = {"successful": True, "data": {"messages": [{"subject": "Hello"}]}, "error": None}
 
     def __call__(self, request: httpx.Request):
-        path = request.url.path.removeprefix("/api/v3")
+        path = request.url.path.removeprefix("/api/v3.1") if request.url.path.startswith("/api/v3.1/") else request.url.path.removeprefix("/api/v3")
         body = json.loads(request.content) if request.content else {}
         self.calls.append((request.method, path, body))
         self.last_request = request
+        if path == "/triggers_types":
+            return {"items": TRIGGER_TYPES, "next_cursor": None}
+        if path.startswith("/trigger_instances/") and path.endswith("/upsert"):
+            return {"trigger_id": "ti_1", "status": "success"}
+        if path.startswith("/trigger_instances/manage/"):
+            return {"status": "success"}
+        if path == "/webhook_subscriptions":
+            return {"id": "ws_1", "secret": "whsec_abc", "webhook_url": body["webhook_url"]}
+        if path.startswith("/webhook_subscriptions/"):
+            return {"id": path.rsplit("/", 1)[-1], "webhook_url": body["webhook_url"]}
         if path == "/tools":
             return {"items": GMAIL_TOOLS, "next_cursor": None}
         if path == "/auth_configs" and request.method == "GET":

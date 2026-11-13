@@ -9,6 +9,9 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent import runner
+from app.agent.toolset import build_toolset
+from app.automations import service
+from app.automations.describe import build_describe_turn
 from app.analytics import posthog
 from app.agent.llm import ModelFactory, get_model_factory, get_user_api_key
 from app.api.deps import get_owned_session
@@ -20,14 +23,10 @@ from app.db.base import get_db
 from app.db.models import AgentIntegration, ChatSession, Message
 from app.integrations import composio
 from app.rag.embeddings import Embedder, get_embedder
-from app.rag.retrieve import document_names
 from app.rag.vector_store import VectorStore, get_vector_store
-from app.tools import forms, knowledge_base
-from app.tools.builtin import calculator, get_current_datetime
 from app.tools.http import ToolError, Unavailable
 
 logger = logging.getLogger(__name__)
-from app.tools.registry import APPROVAL_INSTRUCTION, CARDS_INSTRUCTION, REGISTRY, available, reconnect_instruction
 
 router = APIRouter()
 
@@ -48,7 +47,6 @@ def _new_message_text(body: ChatIn) -> str | None:
     return text
 
 
-BUILTIN_TOOLS = {calculator.name, get_current_datetime.name}
 MAX_RESULT = 2000  # of an approved action's result, kept for the agent's next reply
 
 
@@ -100,6 +98,36 @@ async def _run_approved(db: AsyncSession, agent, user_id: str, request: dict) ->
     return {"outcome": "done", "result": json.dumps(data, ensure_ascii=False, default=str)[:MAX_RESULT]}
 
 
+async def _decide_automation(db: AsyncSession, session: ChatSession, last: Message, request: dict, approve: bool) -> list[dict]:
+    """The same claim-then-act steps as an action, for a proposed automation."""
+    status = "approved" if approve else "rejected"
+    label = f"{request['name']} (automation)"
+    claimed = await db.execute(
+        update(Message)
+        .where(Message.id == last.id, Message.approval["status"].astext == "pending")
+        .values(approval={**request, "status": status})
+    )
+    if claimed.rowcount != 1:
+        raise _not_pending()
+    db.add(Message(session_id=session.id, role="user", content=f"{'Approved' if approve else 'Declined'}: {label}"))
+    session.last_message_at = func.now()
+    await db.commit()
+    if not approve:
+        return []
+    message_id, agent = last.id, session.agent  # read now: a rollback expires the loaded rows
+    try:
+        outcome = await service.activate(db, session, request)
+    except Exception as error:  # the claim is committed, so end with an outcome rather than a stuck message
+        logger.warning("Activating an automation ended unexpectedly: %s", type(error).__name__)
+        await db.rollback()
+        await db.refresh(session)  # the reply that follows reads both
+        await db.refresh(agent)
+        outcome ={"outcome": "failed", "reason": "Couldn't set up the automation. Try again."}
+    await db.execute(update(Message).where(Message.id == message_id).values(approval={**request, "status": status, **outcome}))
+    await db.commit()
+    return [{"label": label, "ok": outcome["outcome"] == "done"}]
+
+
 async def _decide(db: AsyncSession, session: ChatSession, decision: ApprovalIn) -> list[dict]:
     """Records the user's answer to the newest message's request, runs the action if approved,
     and saves the answer as the user's message. Returns the action as the reply's first tool."""
@@ -107,6 +135,8 @@ async def _decide(db: AsyncSession, session: ChatSession, decision: ApprovalIn) 
     if last is None or last.id != decision.message_id or last.role != "assistant" or (last.approval or {}).get("status") != "pending":
         raise _not_pending()
     request, approve = dict(last.approval), decision.decision == "approve"
+    if request.get("kind") == "automation":
+        return await _decide_automation(db, session, last, request, approve)
     where = {"agent_id": session.agent_id, "session_id": session.id, "tool_name": str(request.get("action", "")).lower(),
              "app": request.get("app")}
     status = "approved" if approve else "rejected"
@@ -203,47 +233,16 @@ async def chat(
             await db.commit()
             posthog.capture("message_sent", session.user_id, agent_id=agent.id, session_id=session.id)
         # Read everything the stream needs now; the stream uses its own database sessions.
-        specs = [REGISTRY[name] for name in agent.tools if name in REGISTRY and available(REGISTRY[name])]
-        turn = {
-            "prior_tools": prior_tools,
-            "session_id": session.id,
-            "system_prompt": agent.system_prompt,
-            "summary": session.summary,
-            "tools": [spec.tool for spec in specs],
-            "labels": {spec.name: spec.activity for spec in specs},
-        }
-        instructions = [CARDS_INSTRUCTION] if specs else []
-        form_specs = {spec.name: spec for spec in specs if spec.form}
-        if form_specs:
-            turn["tools"].append(forms.build_ask_tool(form_specs))
-            turn["labels"][forms.ASK_TOOL] = forms.ASK_LABEL
-            turn["forms"] = form_specs
-            instructions.append(forms.details_instruction(form_specs))
-        # The knowledge-base tools exist only while there is something to search.
-        ready_documents = await document_names(db, agent.id) if agent.kb_enabled else []
-        if ready_documents:
-            turn["tools"] += knowledge_base.build_kb_tools(agent.id, agent.search_mode, embedder=embedder, store=store)
-            turn["labels"] |= knowledge_base.LABELS
-            instructions.append(knowledge_base.kb_instruction(ready_documents, strict=agent.kb_strict))
-        # The actions of the apps this agent is connected to. The account each runs on is bound here.
-        if composio.enabled():
-            connected = (await db.scalars(select(AgentIntegration).where(AgentIntegration.agent_id == agent.id))).all()
-            broken = [composio.APPS[row.app].name for row in connected if row.status == "expired" and row.app in composio.APPS]
-            if broken:  # so the agent explains, instead of saying it has no such app
-                instructions.append(reconnect_instruction(broken))
-            app_tools, app_labels = await composio.build_tools(connected, str(session.user_id))
-            turn["tools"] += app_tools
-            turn["labels"] |= app_labels
-            if any((tool.metadata or {}).get("approval") for tool in app_tools):
-                instructions.append(APPROVAL_INSTRUCTION)
-        turn["extra_instruction"] = "\n\n".join(instructions) or None
-        # What each tool counts as in analytics. Actions waiting for approval are counted when they run.
-        kinds = {spec.name: ("builtin" if spec.name in BUILTIN_TOOLS else "api", None) for spec in specs}
-        kinds |= {name: ("knowledge_base", None) for name in knowledge_base.LABELS}
-        kinds |= {tool.name: ("composio", tool.metadata["app"]) for tool in turn["tools"]
-                  if (tool.metadata or {}).get("app") and not tool.metadata.get("approval")}
-        turn["track"] = {"user_id": str(session.user_id), "agent_id": str(agent.id), "session_id": str(session.id),
-                         "search_mode": agent.search_mode, "tool_kinds": kinds}
+        turn = {"prior_tools": prior_tools, "session_id": session.id, "system_prompt": agent.system_prompt, "summary": session.summary}
+        if session.purpose == "automation":
+            turn |= await build_describe_turn(db, agent, session, body.timezone)
+        else:
+            ts = await build_toolset(db, agent, str(session.user_id), embedder=embedder, store=store)
+            turn |= {"tools": ts.tools, "labels": ts.labels, "extra_instruction": "\n\n".join(ts.instructions) or None}
+            if ts.forms:
+                turn["forms"] = ts.forms
+            turn["track"] = {"user_id": str(session.user_id), "agent_id": str(agent.id), "session_id": str(session.id),
+                             "search_mode": agent.search_mode, "tool_kinds": ts.kinds}
         provider, model_id = agent.llm_provider, agent.llm_model
     except BaseException:
         runner.end(session.id)

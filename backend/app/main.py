@@ -4,7 +4,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import analytics, integrations, agents, chat, documents, llm_keys, me, personas, sessions, tools
+from app.automations import scheduler
+from app.api import analytics, automations, integrations, agents, chat, documents, llm_keys, me, personas, sessions, tools, webhooks
 from app.core.config import export_tracing_env, get_settings
 from app.core.errors import ApiError, api_error_handler
 from app.rag.ingest import sweep_interrupted_documents
@@ -14,7 +15,10 @@ from app.rag.ingest import sweep_interrupted_documents
 async def _lifespan(_: FastAPI):
     # Document processing runs in background tasks, which a restart kills.
     await sweep_interrupted_documents()
+    if get_settings().scheduler_enabled:
+        scheduler.start()
     yield
+    await scheduler.stop()
 
 
 def create_app() -> FastAPI:
@@ -35,7 +39,7 @@ def create_app() -> FastAPI:
     async def health() -> dict:
         return {"status": "ok"}
 
-    for module in (me, llm_keys, personas, agents, sessions, chat, tools, documents, integrations, analytics):
+    for module in (me, llm_keys, personas, agents, sessions, chat, tools, documents, integrations, analytics, automations, webhooks):
         app.include_router(module.router)
 
     return app

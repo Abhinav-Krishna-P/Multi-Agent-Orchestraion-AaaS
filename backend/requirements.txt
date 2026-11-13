@@ -16,3 +16,4 @@ python-multipart
 chromadb-client
 rank-bm25
 tzdata
+croniter

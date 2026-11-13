@@ -17,6 +17,7 @@ SERVICE = "PostHog"
 ALLOWED = frozenset({
     "agent_id", "session_id", "tool_name", "tool_type", "app", "success", "duration_ms", "search_mode",
     "results_count", "decision", "outcome", "source_type", "chunk_count", "status",
+    "trigger_kind", "source", "automation_id",
 })
 
 recorder: list[dict] | None = None  # tests put a list here: events are kept instead of sent

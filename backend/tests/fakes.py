@@ -44,12 +44,16 @@ class ScriptedChatModel(BaseChatModel):
         return self
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs) -> ChatResult:
+        if not self.replies:
+            raise RuntimeError("the scripted model ran out of replies")
         chunks = self.replies.pop(0)
         self.received.append(list(messages))
         if self.fail_after is not None:
             raise RuntimeError("provider exploded with secret detail sk-leaky")
         text = "".join(c for c in chunks if isinstance(c, str))
-        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=text))])
+        calls = [{"name": c["tool"], "args": c["args"], "id": f"call_{len(self.received)}_{index}"}
+                 for index, c in enumerate(chunks) if isinstance(c, dict) and "tool" in c]
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=text, tool_calls=calls))])
 
     async def _astream(self, messages, stop=None, run_manager=None, **kwargs):
         if not self.replies:

@@ -33,6 +33,7 @@ os.environ["PLATFORM_GEMINI_API_KEY"] = ""
 os.environ["SUMMARY_MODEL"] = "test-summary-model"
 os.environ["LANGSMITH_TRACING"] = "false"
 os.environ["CHUNKING_METHOD"] = "recursive"
+os.environ["SCHEDULER_ENABLED"] = "false"
 os.environ["DEFAULT_COUNTRY"] = "in"
 os.environ["DEFAULT_CURRENCY"] = "INR"
 for _name in ("POSTHOG_API_KEY", "POSTHOG_PERSONAL_API_KEY", "POSTHOG_PROJECT_ID"):  # tests never send an event

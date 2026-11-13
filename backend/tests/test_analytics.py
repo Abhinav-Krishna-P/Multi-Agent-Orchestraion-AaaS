@@ -16,7 +16,7 @@ from tests.test_tool_loop import call, enable
 
 ALLOWED = {"user_id", "agent_id", "session_id", "tool_name", "tool_type", "app", "success", "duration_ms",
            "search_mode", "results_count", "decision", "outcome", "source_type", "chunk_count", "status",
-           "$process_person_profile"}
+           "trigger_kind", "source", "automation_id", "$process_person_profile"}
 
 
 @pytest.fixture

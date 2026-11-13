@@ -19,7 +19,9 @@ def agent_not_live() -> ApiError:
 @router.get("/agents/{agent_id}/sessions", response_model=list[SessionOut])
 async def list_sessions(agent: Agent = Depends(get_owned_agent), db: AsyncSession = Depends(get_db)):
     rows = await db.scalars(
-        select(ChatSession).where(ChatSession.agent_id == agent.id).order_by(ChatSession.last_message_at.desc())
+        select(ChatSession)
+        .where(ChatSession.agent_id == agent.id, ChatSession.purpose == "chat")
+        .order_by(ChatSession.last_message_at.desc())
     )
     return rows.all()
 

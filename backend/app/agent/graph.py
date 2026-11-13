@@ -9,6 +9,7 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.prebuilt.tool_node import ToolInvocationError
 
+from app.automations.describe import ASK_AUTOMATION_TOOL
 from app.tools.forms import ASK_TOOL
 from app.tools.http import ToolError
 
@@ -39,7 +40,7 @@ def _after_tools(state: MessagesState) -> str:
     for message in reversed(state["messages"]):
         if not isinstance(message, ToolMessage):
             break
-        if message.name == ASK_TOOL and message.status != "error":
+        if message.name in (ASK_TOOL, ASK_AUTOMATION_TOOL) and message.status != "error":
             return END
         if isinstance(message.artifact, dict) and "approval" in message.artifact:
             return END
