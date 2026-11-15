@@ -6,13 +6,19 @@ import { Textarea } from '@/components/ui/textarea'
 const MAX_LENGTH = 20000
 
 /** The message box. Enter sends, Shift+Enter adds a line. While a reply streams, Send becomes Stop. */
-export function Composer({ agentName, value, onChange, onSend, onStop, isStreaming, disabled }) {
+export function Composer({ id, agentName, value, onChange, onSend, onStop, isStreaming, disabled, autoFocus = true }) {
   const textareaRef = useRef(null)
   const canSend = value.trim().length > 0 && value.length <= MAX_LENGTH && !isStreaming && !disabled
 
+  const wasStreaming = useRef(false)
+
   useEffect(() => {
-    if (!isStreaming) textareaRef.current?.focus()
-  }, [isStreaming])
+    // autoFocus={false} skips only the focus on mount; the box is still refocused when a reply ends.
+    const replyEnded = wasStreaming.current && !isStreaming
+    wasStreaming.current = isStreaming
+    // preventScroll: on the Automations page the box sits below the list; focusing must not scroll past it.
+    if (!isStreaming && (autoFocus || replyEnded)) textareaRef.current?.focus({ preventScroll: true })
+  }, [isStreaming, autoFocus])
 
   function submit(event) {
     event.preventDefault()
@@ -28,6 +34,7 @@ export function Composer({ agentName, value, onChange, onSend, onStop, isStreami
     <form onSubmit={submit} className="flex w-full items-end gap-2 p-4">
       <Textarea
         ref={textareaRef}
+        id={id}
         rows={1}
         value={value}
         onChange={(event) => onChange(event.target.value)}

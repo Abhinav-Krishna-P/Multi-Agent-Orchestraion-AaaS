@@ -52,6 +52,7 @@ APPS = {app.slug: app for app in (
     App("hubspot", "HubSpot", "Work and projects"),
 )}
 
+_background: set[asyncio.Task] = set()  # app listings still running after a reply went on without them
 _auth_configs: dict[str, str] = {}  # app -> the ID of its sign-in setup at Composio
 
 
@@ -72,7 +73,7 @@ async def actions(app: str) -> list[dict]:
     user's approval each time). Actions that delete are never offered."""
     found, cursor = [], None
     for _ in range(MAX_PAGES):
-        page = await _call("GET", "/tools", params={"toolkit_slug": app, "limit": 200, **({"cursor": cursor} if cursor else {})}, cache=True)
+        page = await _call("GET", "/tools", params={"toolkit_slug": app, "limit": 200, "tags": "important", **({"cursor": cursor} if cursor else {})}, cache=True)
         found += page.get("items") or []
         cursor = page.get("next_cursor")
         if not cursor:
@@ -343,13 +344,20 @@ async def build_tools(
 
     # Every reply waits here before its first word, so the apps are asked together and only
     # briefly: a slow Composio costs the reply its apps, not the user a minute of silence.
-    try:
-        listed = await asyncio.wait_for(asyncio.gather(*(offered_by(row) for row in rows)), BUILD_SECONDS)
-    except TimeoutError:
-        logger.warning("Composio was too slow; replying without app actions")
-        return [], {}
+    # An app that is not ready in time is skipped for this reply but left running, so its
+    # listing lands in the cache and the next reply has it.
+    pending = [asyncio.ensure_future(offered_by(row)) for row in rows]
+    for task in pending:  # the loop only holds tasks weakly: keep the unfinished ones alive
+        _background.add(task)
+        task.add_done_callback(_background.discard)
+    if pending:
+        await asyncio.wait(pending, timeout=BUILD_SECONDS)
     tools, labels = [], {}
-    for row, offered in zip(rows, listed):
+    for row, task in zip(rows, pending):
+        if not task.done():
+            logger.warning("Composio was too slow listing %s actions; replying without them", row.app)
+            continue
+        offered = task.result()
         app = APPS[row.app]
         for slug in row.actions:
             if slug not in offered:  # an action Composio has since withdrawn is quietly dropped

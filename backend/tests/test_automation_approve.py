@@ -131,6 +131,69 @@ async def test_rejecting_creates_nothing(client, user_a, live_chat, use_model, c
     assert rows[1].approval["status"] == "rejected" and rows[2].content == "Declined: Rate mail (automation)"
 
 
+async def test_the_reply_after_a_decision_is_told_what_happened(client, user_a, live_chat, use_model, composio, db):  # noqa: F811
+    agent, _ = live_chat
+    conv, message_id = await proposed(client, user_a, agent, use_model)
+    model = scripted(["It's live."])
+    use_model(model)
+    await decide(client, user_a, conv, message_id, "approve")
+    approved = 'The user just approved "Rate mail". It is live now.'
+    assert approved in model.received[0][0].content and "do not propose it again" in model.received[0][0].content
+    model = scripted(["Sure."])
+    use_model(model)
+    await send(client, user_a, conv["id"], {"message": "Thanks"})
+    assert approved not in model.received[0][0].content  # only the turn right after the decision
+
+    use_model(scripted(call("propose_automation", **{**PROPOSAL, "name": "Other [mail]", "trigger": {"every_minutes": 20}})))
+    await send(client, user_a, conv["id"], {"message": "Another one", "timezone": "Asia/Kolkata"})
+    message_id = (await client.get(f"/sessions/{conv['id']}/messages", headers=user_a)).json()[-1]["id"]
+    model = scripted(["Okay."])
+    use_model(model)
+    await decide(client, user_a, conv, message_id, "reject")
+    # The name is cleaned like other service text in an instruction.
+    assert 'The user declined "Other mail". Ask what they\'d like to change' in model.received[0][0].content
+
+
+async def test_the_reply_after_a_failed_setup_is_told_why(client, user_a, live_chat, use_model, composio, db):  # noqa: F811
+    agent, _ = live_chat
+    conv, message_id = await proposed(client, user_a, agent, use_model, name="Watch [repos]", trigger_kind="watch",
+                                      trigger={"action": "gmail_fetch_emails"})
+    composio.result = {"successful": False, "data": None, "error": "boom"}
+    model = scripted(["It failed."])
+    use_model(model)
+    await decide(client, user_a, conv, message_id, "approve")
+    system = model.received[0][0].content
+    assert 'Setting up "Watch repos" failed: Couldn\'t read Gmail to start watching. Try again. Explain this' in system
+    assert "Do not say the automation is impossible." in system
+
+
+async def test_an_automation_that_already_exists_is_not_proposed_again(client, user_a, live_chat, use_model, composio, db):  # noqa: F811
+    agent, _ = live_chat
+    conv, message_id = await proposed(client, user_a, agent, use_model)
+    use_model(scripted(["It's live."]))
+    await decide(client, user_a, conv, message_id, "approve")
+    model = scripted(call("propose_automation", **{**PROPOSAL, "name": "Same again", "tools": ["GMAIL_SEND_EMAIL", "convert_currency"]}),
+                     ["It's already set up."])
+    use_model(model)
+    r = await send(client, user_a, conv["id"], {"message": "Set it up", "timezone": "Asia/Kolkata"})
+    assert "approval_required" not in dict(read_events(r.text))
+    assert '"Rate mail" is already set up and live. Tell the user' in model.received[1][-1].content
+    assert (await saved_rows(db, conv["id"]))[-1].approval is None
+
+    [row] = await automations(db)
+    row.status = "paused"
+    await db.commit()
+    model = scripted(call("propose_automation", **PROPOSAL), ["It exists."])
+    use_model(model)
+    await send(client, user_a, conv["id"], {"message": "Set it up", "timezone": "Asia/Kolkata"})
+    assert '"Rate mail" already exists (turned off). Tell the user they can turn it on' in model.received[1][-1].content
+
+    # Only the schedule differs: a new automation, offered as usual.
+    use_model(scripted(call("propose_automation", **{**PROPOSAL, "trigger": {"every_minutes": 15}})))
+    r = await send(client, user_a, conv["id"], {"message": "Every 15 minutes", "timezone": "Asia/Kolkata"})
+    assert dict(read_events(r.text))["approval_required"]["approval"]["trigger"]["every_minutes"] == 15
+
+
 def test_item_keys():
     from app.automations.watch import item_keys
 
@@ -165,7 +228,8 @@ async def test_a_failed_event_registration_creates_nothing(client, user_a, live_
     use_model(scripted(["sorry"]))
     await decide(client, user_a, conv, message_id, "approve")
     assert await automations(db) == []
-    assert (await saved_rows(db, conv["id"]))[1].approval["outcome"] == "failed"
+    approval = (await saved_rows(db, conv["id"]))[1].approval
+    assert approval["outcome"] == "failed" and approval["reason"] == "Couldn't set up Gmail to send its events. Try again."
 
 
 async def test_an_unexpected_error_ends_with_a_failed_outcome(client, user_a, live_chat, use_model, composio, db, monkeypatch):  # noqa: F811

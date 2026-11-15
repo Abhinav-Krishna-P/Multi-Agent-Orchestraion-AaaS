@@ -18,6 +18,7 @@ export async function streamChat({
   onToolStart,
   onToolEnd,
   onSources,
+  onApproval,
   onError,
   onDone,
 }) {
@@ -50,6 +51,7 @@ export async function streamChat({
       else if (event.event === 'tool_start') onToolStart?.(data)
       else if (event.event === 'tool_end') onToolEnd?.(data)
       else if (event.event === 'sources') onSources?.(data.sources)
+      else if (event.event === 'approval_required') onApproval?.(data.approval)
       else if (event.event === 'error') onError(data)
       else if (event.event === 'done') {
         finished = true

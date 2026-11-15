@@ -42,6 +42,7 @@ class FakeComposio:
         self.status = "ACTIVE"
         self.account_user = USER_A_ID
         self.result = {"successful": True, "data": {"messages": [{"subject": "Hello"}]}, "error": None}
+        self.trigger_manage_fails = False
 
     def __call__(self, request: httpx.Request):
         path = request.url.path.removeprefix("/api/v3.1") if request.url.path.startswith("/api/v3.1/") else request.url.path.removeprefix("/api/v3")
@@ -53,6 +54,8 @@ class FakeComposio:
         if path.startswith("/trigger_instances/") and path.endswith("/upsert"):
             return {"trigger_id": "ti_1", "status": "success"}
         if path.startswith("/trigger_instances/manage/"):
+            if self.trigger_manage_fails:
+                return httpx.Response(500, text="down")
             return {"status": "success"}
         if path == "/webhook_subscriptions":
             return {"id": "ws_1", "secret": "whsec_abc", "webhook_url": body["webhook_url"]}
@@ -101,9 +104,35 @@ async def test_actions_offers_only_important_read_actions(composio):
     assert offered[0]["name"] == "Gmail Fetch Emails" and offered[0]["description"] == "Does GMAIL_FETCH_EMAILS."
     assert offered[0]["parameters"]["properties"] == {"query": {"type": "string"}}
     assert composio.last_request.headers["x-api-key"] == "test-composio-key"
-    assert dict(composio.last_request.url.params)["toolkit_slug"] == "gmail"
+    params = dict(composio.last_request.url.params)
+    assert params["toolkit_slug"] == "gmail" and params["tags"] == "important"  # one page, not every tool of the app
     await actions("gmail")
     assert len(composio.calls) == 1  # remembered: the wizard asks often
+
+
+async def test_one_slow_app_does_not_drop_the_others(composio, monkeypatch, caplog):
+    import asyncio
+    from types import SimpleNamespace
+
+    from app.integrations import composio as module
+
+    finished = []
+
+    async def listing(app):
+        if app == "github":
+            await asyncio.sleep(0.5)
+            finished.append(app)
+        return [{"slug": f"{app.upper()}_LIST", "name": "List", "description": "", "parameters": {"type": "object", "properties": {}}, "kind": "read"}]
+
+    monkeypatch.setattr(module, "actions", listing)
+    monkeypatch.setattr(module, "BUILD_SECONDS", 0.1)
+    rows = [SimpleNamespace(app=app, status="active", actions=[f"{app.upper()}_LIST"], id=app, connected_account_id="ca") for app in ("gmail", "github")]
+    with caplog.at_level(logging.WARNING):
+        tools, labels = await module.build_tools(rows, USER_A_ID)
+    assert list(labels) == ["gmail_list"] and len(tools) == 1
+    assert "github" in caplog.text
+    await asyncio.sleep(0.6)
+    assert finished == ["github"]  # left to finish, so the next reply finds it remembered
 
 
 async def test_start_connection_creates_the_auth_config_once(composio):

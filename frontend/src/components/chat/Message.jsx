@@ -2,6 +2,7 @@ import { SlidersHorizontal } from 'lucide-react'
 import { memo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { ProposalCard } from '@/components/automations/ProposalCard'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { ApprovalCard } from './ApprovalCard'
@@ -97,9 +98,12 @@ export const Message = memo(function Message({
           )
         )}
         <ResultCards tools={tools} />
-        {approval && (
-          <ApprovalCard approval={approval} active={formActive} disabled={formDisabled} onDecide={onDecide} />
-        )}
+        {approval &&
+          (approval.kind === 'automation' ? (
+            <ProposalCard approval={approval} active={formActive} disabled={formDisabled} onDecide={onDecide} />
+          ) : (
+            <ApprovalCard approval={approval} active={formActive} disabled={formDisabled} onDecide={onDecide} />
+          ))}
         <Sources sources={sources} />
         {/* Only the newest reply's form can be used; an older request for details is just noted. */}
         {form && formActive && <DetailsForm form={form} disabled={formDisabled} onSend={onSendForm} />}

@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.agent.graph import MAX_TOOL_ROUNDS, RECURSION_LIMIT, build_graph
@@ -19,6 +19,7 @@ from app.agent.llm import ModelFactory, get_model_factory, get_user_api_key
 from app.agent.runner import MODEL_ERROR_MESSAGE, chunk_text
 from app.agent.toolset import build_toolset
 from app.analytics import posthog
+from app.automations import watch
 from app.core.llm_catalog import provider_name
 from app.db.base import session_factory
 from app.db.models import Agent, AgentIntegration, Automation, AutomationRun
@@ -40,6 +41,19 @@ TEST_NOTE = "This is a test run the user started: say in your reply that it is a
 SAMPLE_NOTE = " No real event came with it, so use realistic sample values for the event data."
 UNEXPECTED_ERROR = "Something went wrong while running. Try again."
 STOPPED_ERROR = "Stopped before it finished"
+
+UNREACHABLE = "{app} couldn't be reached. It will try again next time."
+
+
+class NotCounted(str):
+    """A run's error that is not the automation's fault (an outage): not counted toward the failures that turn it off."""
+
+
+def bounded_event(data: dict) -> dict:
+    """The event as kept with a run: whole if its JSON fits MAX_EVENT_CHARS, otherwise that JSON cut, under "truncated"."""
+    text = json.dumps(data, default=str)
+    return data if len(text) <= MAX_EVENT_CHARS else {"truncated": text[:MAX_EVENT_CHARS]}
+
 
 model_factory: ModelFactory | None = None  # None: the real one (tests put a scripted model here)
 _locks: dict[uuid.UUID, asyncio.Lock] = {}
@@ -63,6 +77,15 @@ def spawn_run(coro: Coroutine) -> None:
 async def wait_for_runs() -> None:
     while _runs:
         await asyncio.gather(*list(_runs), return_exceptions=True)
+
+
+async def sweep_interrupted_runs() -> int:
+    """Closes runs a restart left "running"; the automations' failure counts are not touched."""
+    async with session_factory() as db:
+        result = await db.execute(update(AutomationRun).where(AutomationRun.status == "running").values(
+            status="failed", error="Interrupted by a restart", finished_at=datetime.now(UTC)))
+        await db.commit()
+        return result.rowcount
 
 
 async def run_automation(
@@ -120,7 +143,7 @@ async def _run(automation_id, source, event, event_key, run_id) -> uuid.UUID | N
     except Exception as exc:  # only the type: errors can carry request details
         logger.warning("An automation run failed: %s", type(exc).__name__)
         error = UNEXPECTED_ERROR
-    await _finish(automation, run_id, source != "test", error, reply["text"], used)
+    await _finish(automation, run_id, source != "test" and not isinstance(error, NotCounted), error, reply["text"], used)
     posthog.capture("automation_run", automation.user_id, agent_id=agent.id, automation_id=automation.id,
                     trigger_kind=automation.trigger_kind, source=source, success=error is None,
                     duration_ms=int((time.monotonic() - started) * 1000))
@@ -134,7 +157,9 @@ async def _attempt(automation: Automation, agent: Agent, source: str, event: dic
     if error:
         return error
     model, toolset, system = setup
-    messages = [SystemMessage(system + RUN_INSTRUCTION), _human_message(automation, source, event)]
+    if source == "test" and event is None and automation.trigger_kind == "watch":
+        event = await watch.newest(automation)  # the newest real item if there is one; otherwise sample values
+    messages =[SystemMessage(system + RUN_INSTRUCTION), _human_message(automation, source, event)]
     track = {"agent_id": agent.id, "automation_id": automation.id}
     failed_tool = None
 
@@ -192,7 +217,13 @@ async def _setup(db, automation: Automation, agent: Agent) -> tuple[str | None, 
     names = {tool.name for tool in toolset.tools}
     missing = [name for name in automation.tools if name not in names]
     if missing:
-        return f"{missing[0]} isn't available to this agent any more", None
+        # Still switched on in a working connection: Composio was slow or down, not the tool gone.
+        apps = {slug.lower(): row.app for row in await db.scalars(select(AgentIntegration).where(
+            AgentIntegration.agent_id == agent.id, AgentIntegration.status == "active")) if row.app in composio.APPS
+            for slug in row.actions}
+        if gone := [name for name in missing if name not in apps]:
+            return f"{gone[0]} isn't available to this agent any more", None
+        return NotCounted(UNREACHABLE.format(app=composio.APPS[apps[missing[0]]].name)), None
     try:
         model = (model_factory or get_model_factory())(agent.llm_provider, agent.llm_model, key)
     except Exception as exc:

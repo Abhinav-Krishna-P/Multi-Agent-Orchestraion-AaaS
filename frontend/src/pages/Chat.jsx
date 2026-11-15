@@ -33,15 +33,10 @@ import {
   useModelCatalog,
   useSessions,
 } from '@/lib/queries'
-import { streamChat } from '@/lib/sse'
+import { INTERRUPTED, decisionText, useChatTurn } from '@/lib/useChatTurn'
 
-const INTERRUPTED = { message: 'The reply was interrupted. Try again.' }
-// After Stop, the server saves the text written so far; give it a moment before reloading.
-const STOP_SAVE_DELAY_MS = 500
 // Refusals that mean the page's view of the agent or keys is out of date.
 const STALE_STATE_CODES = ['missing_api_key', 'agent_not_live', 'llm_not_configured']
-
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 function CenteredNote({ children }) {
   return <div className="flex h-full flex-col items-center justify-center gap-4 p-8 text-center">{children}</div>
@@ -68,70 +63,22 @@ function ChatThread({ agent, sessionId, providerName, modelName }) {
   const deploy = useDeployAgent()
 
   const [draft, setDraft] = useState('')
-  const [pendingUserText, setPendingUserText] = useState(null)
-  const [streamingText, setStreamingText] = useState('')
-  const [streamingTools, setStreamingTools] = useState([]) // [{ id, label, ok }], ok is null while running
-  const [streamingSources, setStreamingSources] = useState([])
-  const [isStreaming, setIsStreaming] = useState(false)
-  const [error, setError] = useState(null) // { message }
-  const abortRef = useRef(null)
-  const openedRef = useRef(false)
   const sentFirstRef = useRef(false)
+  const {
+    runTurn,
+    stop,
+    isStreaming,
+    pendingUserText,
+    streamingText,
+    streamingTools,
+    streamingSources,
+    error,
+    setError,
+  } = useChatTurn({ agentId: agent.id, sessionId, onFailure: reportFailure })
 
-  // `shownText` is what appears as the user's message while the reply streams.
-  async function runTurn(targetSessionId, body, shownText = body.message) {
-    const controller = new AbortController()
-    abortRef.current = controller
-    openedRef.current = false
-    setError(null)
-    setStreamingText('')
-    setStreamingTools([])
-    setStreamingSources([])
-    setPendingUserText(shownText ?? null)
-    setIsStreaming(true)
-
-    let failure = null
-    try {
-      const { finished } = await streamChat({
-        sessionId: targetSessionId,
-        body,
-        signal: controller.signal,
-        onOpen: () => {
-          openedRef.current = true
-        },
-        onToken: (text) => setStreamingText((previous) => previous + text),
-        onToolStart: (tool) => setStreamingTools((tools) => [...tools, { ...tool, ok: null }]),
-        onToolEnd: ({ id, ok, card }) =>
-          setStreamingTools((tools) => tools.map((tool) => (tool.id === id ? { ...tool, ok, card } : tool))),
-        onSources: setStreamingSources,
-        onError: (data) => {
-          failure = data
-        },
-        onDone: () => {},
-      })
-      if (!finished && !controller.signal.aborted && !failure) failure = INTERRUPTED
-    } catch (err) {
-      if (!controller.signal.aborted) failure = err
-    }
-
-    if (controller.signal.aborted) await wait(STOP_SAVE_DELAY_MS)
-    await Promise.all([
-      client.invalidateQueries({ queryKey: keys.messages(targetSessionId) }),
-      client.invalidateQueries({ queryKey: keys.sessions(agent.id) }),
-      // A connection that broke during the reply shows its Reconnect bar straight away.
-      client.invalidateQueries({ queryKey: keys.integrations(agent.id) }),
-    ])
-    setIsStreaming(false)
-    setStreamingText('')
-    setStreamingTools([])
-    setStreamingSources([])
-    setPendingUserText(null)
-    if (failure) reportFailure(failure, targetSessionId, body)
-  }
-
-  function reportFailure(failure, targetSessionId, body) {
+  function reportFailure(failure, body) {
     if (failure.status === 401) return // signed out; the app is already leaving this page
-    const saved = client.getQueryData(keys.messages(targetSessionId)) ?? []
+    const saved = client.getQueryData(keys.messages(sessionId)) ?? []
     const unanswered = saved[saved.length - 1]?.role === 'user'
     const refused = failure.status >= 400 // the server said no before saving anything
     // Give the text back whenever it was not saved, instead of losing it.
@@ -152,7 +99,7 @@ function ChatThread({ agent, sessionId, providerName, modelName }) {
 
   async function send(text) {
     setDraft('')
-    if (sessionId) return runTurn(sessionId, { message: text })
+    if (sessionId) return runTurn({ message: text })
     // First message of a new chat: create the chat, open it, and send from there.
     try {
       const session = await createSession.mutateAsync()
@@ -167,9 +114,7 @@ function ChatThread({ agent, sessionId, providerName, modelName }) {
   // The user's answer to an action the agent asked approval for. Only the choice is sent:
   // what runs is the server's own copy of the request.
   function decide(message, decision) {
-    const { action_name: action, app_name: app } = message.approval
-    const shown = `${decision === 'approve' ? 'Approved' : 'Declined'}: ${action} (${app})`
-    runTurn(sessionId, { approval: { message_id: message.id, decision } }, shown)
+    runTurn({ approval: { message_id: message.id, decision } }, decisionText(message.approval, decision))
   }
 
   // A chat opened by send() above carries its first message in the navigation state.
@@ -179,7 +124,7 @@ function ChatThread({ agent, sessionId, providerName, modelName }) {
     sentFirstRef.current = true
     // Clear the state first, so reloading the page never sends the message again.
     navigate(location.pathname, { replace: true, state: null })
-    runTurn(sessionId, { message: first })
+    runTurn({ message: first })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId])
 
@@ -260,7 +205,7 @@ function ChatThread({ agent, sessionId, providerName, modelName }) {
         onSend={send}
         // Send and Stop share one button: ignore Stop until the server has the message,
         // so a double click can't cancel a message before it is saved.
-        onStop={() => openedRef.current && abortRef.current?.abort()}
+        onStop={stop}
         isStreaming={isStreaming}
         disabled={starting || llmKeys.isPending}
         />
@@ -295,7 +240,7 @@ function ChatThread({ agent, sessionId, providerName, modelName }) {
           streamingSources={streamingSources}
           isStreaming={isStreaming}
           error={shownError}
-          onRetry={unanswered ? () => runTurn(sessionId, { retry: true }) : null}
+          onRetry={unanswered ? () => runTurn({ retry: true }) : null}
           emptyHint={`Send a message to start chatting with ${agent.name}.`}
         />
       )}

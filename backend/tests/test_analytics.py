@@ -110,6 +110,15 @@ async def test_chats_messages_and_builtin_tools(client, user_a, live_chat, use_m
     assert named(events, "tool_called")[-1]["success"] is False
 
 
+async def test_describe_messages_are_not_chat_messages(client, user_a, live_chat, use_model, composio, events):  # noqa: F811
+    agent, _ = live_chat
+    conv = (await client.post(f"/agents/{agent['id']}/automation-conversations", headers=user_a)).json()
+    use_model(scripted(["What should it do?"]))
+    r = await send(client, user_a, conv["id"], {"message": "Email me the rate"})
+    assert r.status_code == 200
+    assert named(events, "message_sent") == []
+
+
 async def test_service_tools_count_as_api(client, user_a, live_chat, use_model, events, web):  # noqa: F811
     agent, session = live_chat
     await enable(client, user_a, agent, "web_search")

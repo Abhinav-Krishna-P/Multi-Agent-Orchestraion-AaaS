@@ -14,6 +14,9 @@ export const keys = {
   documents: (agentId) => ['documents', agentId],
   tools: ['tools'],
   integrations: (agentId) => ['integrations', agentId],
+  automations: (agentId) => ['automations', agentId],
+  automationRuns: (id) => ['automation-runs', id],
+  automationConversation: (agentId) => ['automation-conversation', agentId],
 }
 
 // --- LLM keys and models --------------------------------------------------------------
@@ -219,10 +222,89 @@ export function useCheckApps(agentId) {
   })
 }
 
+// --- Automations ----------------------------------------------------------------------------
+
+const RUN_POLL_MS = 2000
+const isRunning = (run) => run?.status === 'running'
+
+/** An agent's automations. Checks again every 2 seconds while any of them is running. */
+export function useAutomations(agentId) {
+  return useQuery({
+    queryKey: keys.automations(agentId),
+    queryFn: () => api(`/agents/${agentId}/automations`),
+    enabled: Boolean(agentId),
+    refetchInterval: (query) => (query.state.data?.some((a) => isRunning(a.last_run)) ? RUN_POLL_MS : false),
+  })
+}
+
+/** The last 20 runs of an automation. Checks again every 2 seconds while one is running. */
+export function useAutomationRuns(automationId) {
+  return useQuery({
+    queryKey: keys.automationRuns(automationId),
+    queryFn: () => api(`/automations/${automationId}/runs`),
+    refetchInterval: (query) => (query.state.data?.some(isRunning) ? RUN_POLL_MS : false),
+  })
+}
+
+export function useSetAutomationStatus(agentId) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, status }) => api(`/automations/${id}`, { method: 'PATCH', body: { status } }),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.automations(agentId) }),
+    // Refused because the agent was stopped meanwhile: show its real status.
+    onError: (err) => err.code === 'agent_not_live' && client.invalidateQueries({ queryKey: keys.agents }),
+  })
+}
+
+export function useDeleteAutomation(agentId) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (id) => api(`/automations/${id}`, { method: 'DELETE' }),
+    onSuccess: (_data, id) => {
+      client.removeQueries({ queryKey: keys.automationRuns(id) })
+      return client.invalidateQueries({ queryKey: keys.automations(agentId) })
+    },
+  })
+}
+
+export function useTestAutomation(agentId) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (id) => api(`/automations/${id}/test`, { method: 'POST' }),
+    onSuccess: (_data, id) =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: keys.automationRuns(id) }),
+        client.invalidateQueries({ queryKey: keys.automations(agentId) }),
+      ]),
+  })
+}
+
+/** The agent's latest describe conversation, or null when it has none yet. */
+export function useAutomationConversation(agentId) {
+  return useQuery({
+    queryKey: keys.automationConversation(agentId),
+    queryFn: () =>
+      api(`/agents/${agentId}/automation-conversations/latest`).catch((err) => {
+        if (err.status === 404) return null
+        throw err
+      }),
+    enabled: Boolean(agentId),
+  })
+}
+
+export function useStartAutomationConversation(agentId) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: () => api(`/agents/${agentId}/automation-conversations`, { method: 'POST' }),
+    onSuccess: (session) => client.setQueryData(keys.automationConversation(agentId), session),
+    onError: (err) => err.code === 'agent_not_live' && client.invalidateQueries({ queryKey: keys.agents }),
+  })
+}
+
 // --- Analytics ------------------------------------------------------------------------------
 
 /** One agent's numbers for a period ("7d", "30d", "90d"), read from PostHog by the backend. */
-export function useAnalytics(agentId, range) {
+export function useAnalytics(agentId, range, enabled = true) {
   return useQuery({
     queryKey: ['analytics', agentId, range],
     // Days are counted in the viewer's own time zone.
@@ -230,6 +312,18 @@ export function useAnalytics(agentId, range) {
       const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
       return api(`/agents/${agentId}/analytics?range=${range}&tz=${encodeURIComponent(tz)}`)
     },
-    enabled: Boolean(agentId),
+    enabled: Boolean(agentId) && enabled,
+  })
+}
+
+/** Fetched only while the Automations tab is open. */
+export function useAutomationAnalytics(agentId, range, enabled = true) {
+  return useQuery({
+    queryKey: ['analytics', agentId, range, 'automations'],
+    queryFn: () => {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+      return api(`/agents/${agentId}/analytics/automations?range=${range}&tz=${encodeURIComponent(tz)}`)
+    },
+    enabled: Boolean(agentId) && enabled,
   })
 }

@@ -152,6 +152,39 @@ async def test_watch_survives_a_failing_action_and_a_dead_connection(client, use
     assert (await fresh(db, Automation, a.id)).trigger["seen"] == ["1", "2"]
 
 
+async def test_a_watch_whose_connection_broke_asks_for_a_reconnect(client, user_a, live_chat, composio, db, monkeypatch):  # noqa: F811
+    from app.automations.scheduler import tick
+
+    agent, _ = live_chat
+    calls = record(monkeypatch)
+    await switch_on(client, user_a, agent["id"], "GMAIL_FETCH_EMAILS")
+    signed_out = await due(db, agent, trigger_kind="watch", trigger=dict(WATCH))
+    composio.result = {"successful": False, "data": None, "error": "401 Unauthorized"}
+    assert await tick(datetime.now(UTC)) == 0
+    row = await fresh(db, Automation, signed_out.id)
+    assert row.status == "error" and row.status_reason == "Reconnect Gmail"
+    # Found expired later (the connection is already marked): the same.
+    later = await due(db, agent, trigger_kind="watch", trigger=dict(WATCH))
+    assert await tick(datetime.now(UTC)) == 0 and calls == []
+    row = await fresh(db, Automation, later.id)
+    assert row.status == "error" and row.status_reason == "Reconnect Gmail"
+
+
+async def test_a_long_watch_item_is_trimmed_before_it_is_stored(client, user_a, live_chat, composio, db, monkeypatch):  # noqa: F811
+    from app.automations import run
+    from app.automations.scheduler import tick
+
+    agent, _ = live_chat
+    calls = record(monkeypatch)
+    await switch_on(client, user_a, agent["id"], "GMAIL_FETCH_EMAILS")
+    await due(db, agent, trigger_kind="watch", trigger=dict(WATCH))
+    composio.result = ok({"messages": [{"id": 3, "body": "x" * 10000}]})
+    assert await tick(datetime.now(UTC)) == 1
+    await run.wait_for_runs()
+    [(_, _, event, key, _)] = calls
+    assert key == "3" and set(event) == {"truncated"} and len(event["truncated"]) == run.MAX_EVENT_CHARS
+
+
 async def test_the_loop_starts_once_and_survives_a_failing_tick(monkeypatch):
     from app.automations import scheduler
 

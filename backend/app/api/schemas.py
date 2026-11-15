@@ -91,6 +91,43 @@ class SessionOut(_FromRow):
     last_message_at: datetime
 
 
+class RunOut(_FromRow):
+    id: uuid.UUID
+    source: str
+    status: str
+    started_at: datetime
+    finished_at: datetime | None
+    output: str | None
+    tool_calls: list | None
+    error: str | None
+
+
+class AutomationOut(_FromRow):
+    id: uuid.UUID
+    name: str
+    task: str
+    trigger_kind: str
+    trigger_text: str
+    trigger: dict
+    tools: list[str]
+    locked: dict
+    status: str
+    status_reason: str | None
+    next_run_at: datetime | None
+    last_run_at: datetime | None
+    created_at: datetime
+    last_run: RunOut | None = None
+
+    @field_validator("trigger")
+    @classmethod
+    def _shown_settings(cls, trigger: dict) -> dict:  # what was approved, not the bookkeeping kept with it
+        return {key: value for key, value in trigger.items() if key not in ("seen", "composio_trigger_id")}
+
+
+class AutomationStatusIn(BaseModel):
+    status: Literal["active", "paused"]
+
+
 class SessionAgentOut(_FromRow):
     id: uuid.UUID
     name: str

@@ -1,4 +1,4 @@
-import { BarChart3, Bot, ChevronsUpDown, KeyRound, LogOut, Menu, MessageSquare } from 'lucide-react'
+import { BarChart3, Bot, ChevronsUpDown, KeyRound, LogOut, Menu, MessageSquare, Workflow } from 'lucide-react'
 import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { ApiKeysDialog } from '@/components/ApiKeysDialog'
@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils'
 const NAV_ITEMS = [
   { to: '/app/agents', label: 'Create your agent', icon: Bot },
   { to: '/app/chat', label: 'Chat with your agent', icon: MessageSquare },
+  { to: '/app/automations', label: 'Automations', icon: Workflow },
   { to: '/app/analytics', label: 'Analytics', icon: BarChart3 },
 ]
 

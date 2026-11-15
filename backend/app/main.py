@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.automations import scheduler
+from app.automations.run import sweep_interrupted_runs
 from app.api import analytics, automations, integrations, agents, chat, documents, llm_keys, me, personas, sessions, tools, webhooks
 from app.core.config import export_tracing_env, get_settings
 from app.core.errors import ApiError, api_error_handler
@@ -15,6 +16,7 @@ from app.rag.ingest import sweep_interrupted_documents
 async def _lifespan(_: FastAPI):
     # Document processing runs in background tasks, which a restart kills.
     await sweep_interrupted_documents()
+    await sweep_interrupted_runs()
     if get_settings().scheduler_enabled:
         scheduler.start()
     yield

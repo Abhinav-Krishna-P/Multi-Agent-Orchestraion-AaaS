@@ -9,7 +9,8 @@ from app.core.errors import ApiError
 from app.core.llm_catalog import is_valid_model
 from app.db.base import get_db
 from app.api.integrations import disconnect_quietly
-from app.db.models import Agent, AgentIntegration, Document, User
+from app.automations.service import delete_triggers, pause_for_stopped_agent
+from app.db.models import Agent, AgentIntegration, Automation, Document, User
 from app.integrations import composio
 from app.rag.vector_store import VectorStore, VectorStoreUnavailable, get_vector_store
 
@@ -109,6 +110,8 @@ async def delete_agent(
     if composio.enabled():
         for row in await db.scalars(select(AgentIntegration).where(AgentIntegration.agent_id == agent.id)):
             await disconnect_quietly(row.connected_account_id)
+    # Likewise its automations' triggers; the rows go by cascade.
+    await delete_triggers(db, (await db.scalars(select(Automation).where(Automation.agent_id == agent.id))).all())
     await db.delete(agent)
     await db.commit()
     return Response(status_code=204)
@@ -130,6 +133,7 @@ async def stop_agent(agent: Agent = Depends(get_owned_agent), db: AsyncSession =
     if agent.status != "live":
         raise ApiError(409, "agent_not_live", "This agent isn't running.")
     agent.status = "stopped"
+    await pause_for_stopped_agent(db, agent.id)
     await db.commit()
     await db.refresh(agent)
     return agent

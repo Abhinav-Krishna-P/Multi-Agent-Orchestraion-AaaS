@@ -68,6 +68,23 @@ async def test_a_run_uses_only_its_tools_and_the_locked_values(client, user_a, l
     assert a.last_run_at is not None and a.failure_streak == 0 and a.status == "active"
 
 
+async def test_a_restart_closes_runs_left_running(client, user_a, live_chat, db):  # noqa: F811
+    from app.automations.run import sweep_interrupted_runs
+
+    agent, _ = live_chat
+    a = await make(db, agent, failure_streak=1)
+    stuck = AutomationRun(automation_id=a.id, user_id=a.user_id, source="schedule", status="running")
+    done = AutomationRun(automation_id=a.id, user_id=a.user_id, source="schedule", status="succeeded")
+    db.add_all([stuck, done])
+    await db.commit()
+    assert await sweep_interrupted_runs() == 1
+    stuck, done = await fresh(db, AutomationRun, stuck.id), await fresh(db, AutomationRun, done.id)
+    assert stuck.status == "failed" and stuck.error == "Interrupted by a restart" and stuck.finished_at is not None
+    assert done.status == "succeeded" and done.error is None
+    a = await fresh(db, Automation, a.id)
+    assert a.failure_streak == 1 and a.status == "active"
+
+
 async def test_three_failures_turn_it_off_but_tests_do_not_count(client, user_a, live_chat, composio, db, use_run_model):  # noqa: F811
     from app.automations.run import run_automation
 
@@ -150,6 +167,49 @@ async def test_event_data_is_passed_as_untrusted(client, user_a, live_chat, comp
     await run_automation(a.id, "test")
     assert "test" in model.received[1][1].content.lower() and "sample" in model.received[1][1].content.lower()
     assert len(await runs(db)) == 2
+
+
+async def test_testing_a_watch_uses_the_newest_real_item(client, user_a, live_chat, composio, db, use_run_model):  # noqa: F811
+    from app.automations.run import run_automation
+
+    agent, _ = live_chat
+    await switch_on(client, user_a, agent["id"], "GMAIL_FETCH_EMAILS", "GMAIL_SEND_EMAIL")
+    trigger = {"app": "gmail", "action": "GMAIL_FETCH_EMAILS", "arguments": {"query": "in:inbox"}, "seen": ["1"]}
+    a = await make(db, agent, trigger_kind="watch", trigger=trigger)
+    model = use_run_model(scripted(["Done."], ["Done."], ["Done."]))
+    composio.result = {"successful": True, "data": {"messages": [{"id": 2, "subject": "Newest"}, {"id": 1, "subject": "Older"}]}, "error": None}
+    run = await fresh(db, AutomationRun, await run_automation(a.id, "test"))
+    task = model.received[0][1].content
+    assert run.status == "succeeded" and "Newest" in task and "Older" not in task
+    assert "test" in task.lower() and "sample" not in task.lower()
+    assert composio.made("POST", "/tools/execute/GMAIL_FETCH_EMAILS")[-1]["arguments"] == {"query": "in:inbox"}
+    assert (await fresh(db, Automation, a.id)).trigger["seen"] == ["1"]  # a test is not news
+    # Nothing there, or the read fails: invented sample values.
+    composio.result = {"successful": True, "data": {"messages": []}, "error": None}
+    await run_automation(a.id, "test")
+    composio.result = FAILED
+    await run_automation(a.id, "test")
+    assert all("sample" in model.received[i][1].content.lower() for i in (1, 2))
+
+
+async def test_an_unreachable_composio_fails_the_run_without_counting(client, user_a, live_chat, composio, db, use_run_model, monkeypatch):  # noqa: F811
+    from app.automations.run import run_automation
+    from app.integrations import composio as module
+    from app.tools.http import ToolError
+
+    agent, _ = live_chat
+    await switch_on(client, user_a, agent["id"], "GMAIL_SEND_EMAIL")
+    a = await make(db, agent, failure_streak=2)
+    use_run_model(scripted(["unused"]))
+
+    async def down(app):
+        raise ToolError("Composio can't be reached")
+
+    monkeypatch.setattr(module, "actions", down)
+    run = await fresh(db, AutomationRun, await run_automation(a.id, "schedule"))
+    assert run.status == "failed" and run.error == "Gmail couldn't be reached. It will try again next time."
+    a = await fresh(db, Automation, a.id)
+    assert a.failure_streak == 2 and a.status == "active"
 
 
 async def test_a_second_scheduled_run_is_skipped_while_one_runs(client, user_a, live_chat, composio, db, use_run_model, monkeypatch):  # noqa: F811

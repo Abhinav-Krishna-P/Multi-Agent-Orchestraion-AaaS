@@ -35,13 +35,24 @@ export function MessageList({
     if (el && stickRef.current) el.scrollTop = el.scrollHeight
   }, [messages, streamingText, streamingTools, streamingSources, isStreaming, error])
 
+  // A list that was hidden (the Automations page's other tab) or resized stays at the bottom when shown again.
+  useEffect(() => {
+    const el = containerRef.current
+    const observer = new ResizeObserver(() => {
+      if (stickRef.current) el.scrollTop = el.scrollHeight
+    })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
+
   const empty = messages.length === 0 && !isStreaming
 
   return (
     <div ref={containerRef} onScroll={onScroll} className="relative min-h-0 flex-1 overflow-y-auto">
       {/* relative: keeps screen-reader-only labels inside this scroller, or they stretch the page */}
       {empty ? (
-        <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">
+        // min-h-full, not h-full: a hint taller than a short box grows and scrolls instead of being cut off.
+        <div className="flex min-h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">
           {emptyHint}
         </div>
       ) : (

@@ -51,7 +51,7 @@ async def tick(now: datetime) -> int:
                 started += 1
                 continue
             for key, item in await watch.check(automation):
-                run.spawn_run(_bounded(run.run_automation(automation.id, "watch", event=item, event_key=key, wait=True)))
+                run.spawn_run(_bounded(run.run_automation(automation.id, "watch", event=run.bounded_event(item), event_key=key, wait=True)))
                 started += 1
         except Exception as exc:  # only the type: errors can carry details
             logger.warning("An automation could not be started: %s", type(exc).__name__)

@@ -10,9 +10,10 @@ from langchain_core.tools import BaseTool, StructuredTool
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
+from app.agent.context import _plain
 from app.agent.toolset import build_toolset
 from app.automations.schedule import check_schedule
-from app.db.models import AgentIntegration
+from app.db.models import AgentIntegration, Automation, Message
 from app.integrations import composio
 from app.tools.forms import ASK_TOOL, FormField, form_spec
 from app.tools.http import ToolError
@@ -37,9 +38,41 @@ RULES = f"""Rules:
 - If nothing above can do what it needs, reply with exactly this sentence and nothing else: "{NOT_POSSIBLE}" Never improvise or pretend a capability.
 - Ask for every missing detail (recipient, how often, which repository...) with {ASK_AUTOMATION_TOOL}, never in plain text. Never ask for app sign-ins or passwords: apps use the agent's connections.
 - A run cannot ask anyone anything, so every value the task needs must be known before you propose.
-- Triggers: "schedule" is {{"every_minutes": N}} (N at least 5) or {{"cron": "<5 fields>"}} in the user's time zone, with runs at least 5 minutes apart. "event" is a Composio event of a connected app: call list_event_triggers, then use {{"app", "trigger_slug", "config"}} with its required settings filled. "watch" is for events no Composio event covers: {{"action": "<a read action of a connected app>", "arguments": {{...}}}} (arguments optional: the action's own parameters, such as the repository), run every 5 minutes; each new item it returns starts one run. Prefer an event when one fits, otherwise watch.
+- Triggers: "schedule" is {{"every_minutes": N}} (N at least 5) or {{"cron": "<5 fields>"}} in the user's time zone, with runs at least 5 minutes apart. "event" is a Composio event of a connected app: call list_event_triggers, then use {{"app", "trigger_slug", "config"}} with its required settings filled. "watch" is for events no Composio event covers: {{"action": "<a read action of a connected app>", "arguments": {{...}}}} (arguments optional: the action's own parameters, such as the repository), run every 5 minutes; each new item it returns starts one run. Prefer an event when one fits, otherwise watch. For a watch prefer a read action that LISTS items (for example "list ... for the authenticated user") over a search or find action, and fill every argument the action requires.
 - For each write tool, put the values that decide where or to whom it acts (recipient, channel, repository, owner, ids...) in "locked", by tool name, exactly as the user gave them. Runs can never change them.
 - Propose one automation at a time with propose_automation, using only the agent's tools. If it reports a problem, fix it and propose again."""
+
+
+def _trigger_key(kind: str, trigger: dict, timezone: str | None) -> tuple:
+    """What decides when an automation runs, in the stored shape, so a proposal can be matched to a saved one."""
+    if kind == "schedule":
+        if "every_minutes" in trigger:
+            return ("every", trigger["every_minutes"])
+        return ("cron", " ".join(str(trigger.get("cron", "")).split()), timezone)
+    if kind == "event":
+        return (trigger.get("app"), trigger.get("trigger_slug"), trigger.get("config") or {})
+    return (trigger.get("app"), str(trigger.get("action", "")).lower(), trigger.get("arguments") or {})
+
+
+def _after_decision(newest: list) -> str:
+    """The line for the reply right after the user approved or declined a proposal, so it confirms
+    instead of proposing the same automation again."""
+    if len(newest) < 2 or newest[0].role != "user" or newest[1].role != "assistant":
+        return ""
+    approval = newest[1].approval or {}
+    if approval.get("kind") != "automation":
+        return ""
+    name = _plain(approval.get("name", ""))
+    if approval.get("status") == "approved" and approval.get("outcome") == "done":
+        return (f'The user just approved "{name}". It is live now. Reply with one short confirmation (what it does and '
+                "when it runs) and do not propose it again unless the user asks for a change.")
+    if approval.get("status") == "approved" and approval.get("outcome") == "failed":
+        reason = _plain(approval.get("reason", "")).rstrip(".")
+        return (f'Setting up "{name}" failed: {reason}. Explain this in one or two sentences and offer to try again with a fix '
+                "(for example a different action or the missing details). Do not say the automation is impossible.")
+    if approval.get("status") == "rejected":
+        return f'The user declined "{name}". Ask what they\'d like to change; do not propose the same automation again.'
+    return ""
 
 
 def _zone(name: str | None) -> str:
@@ -106,6 +139,14 @@ async def build_describe_turn(db, agent, session, timezone: str) -> dict:
     rows = (await db.scalars(select(AgentIntegration).where(AgentIntegration.agent_id == agent.id))).all() if composio.enabled() else []
     active = {row.app: row for row in rows if row.status == "active" and row.app in composio.APPS}
     slugs = {slug.lower(): slug for row in active.values() for slug in row.actions}
+    # Read now as plain values: the proposal tool runs later, in the stream, without this database session.
+    existing = [
+        (row.name, row.status, row.trigger_kind, _trigger_key(row.trigger_kind, row.trigger, row.trigger.get("timezone")),
+         set(row.tools), row.locked)
+        for row in (await db.scalars(select(Automation).where(Automation.agent_id == agent.id))).all()
+    ]
+    newest = (await db.scalars(
+        select(Message).where(Message.session_id == session.id).order_by(Message.created_at.desc()).limit(2))).all()
 
     def app_of(name: str) -> str | None:
         return (own[name].metadata or {}).get("app")
@@ -164,9 +205,13 @@ async def build_describe_turn(db, agent, session, timezone: str) -> dict:
             arguments = trigger.get("arguments") or {}
             if not isinstance(arguments, dict):
                 raise ToolError("The watch's arguments must be an object of the action's parameters.")
-            parameters = {a["slug"].lower(): a for a in await composio.actions(app_of(action))}[action]["parameters"].get("properties") or {}
+            spec = {a["slug"].lower(): a for a in await composio.actions(app_of(action))}[action]["parameters"]
+            parameters = spec.get("properties") or {}
             if unknown := [arg for arg in arguments if arg not in parameters]:
                 raise ToolError(f"{action} has no argument named {', '.join(unknown)}. Its arguments are: {', '.join(parameters)}.")
+            if missing := [key for key in spec.get("required") or [] if arguments.get(key) is None or (isinstance(arguments[key], str) and not arguments[key].strip())]:
+                raise ToolError(f"{action} needs these arguments: {', '.join(missing)}. Fill them in the watch's arguments, or choose a read "
+                                "action that lists items without a search query (for example one that lists items for the authenticated user).")
             trigger = {"action": slugs[action], "app": app_of(action), **({"arguments": arguments} if arguments else {})}
         labels = {}
         for tool in chosen:
@@ -184,10 +229,20 @@ async def build_describe_turn(db, agent, session, timezone: str) -> dict:
                 if unknown := [arg for arg in locked.get(tool, {}) if arg not in properties]:
                     raise ToolError(f"{tool} has no argument named {', '.join(unknown)}. Its arguments are: {', '.join(properties)}.")
                 required = set(action["parameters"].get("required") or [])
-                unlocked = [arg for arg in composio.destination_args(action)
-                            if arg in required and locked.get(tool, {}).get(arg) in (None, "")]
-                if unlocked:
+                destinations = composio.destination_args(action)
+                unset = [arg for arg in destinations if locked.get(tool, {}).get(arg) in (None, "")]
+                if unlocked := [arg for arg in unset if arg in required]:
                     raise ToolError(f"{tool} must have {', '.join(unlocked)} in locked, with the user's exact values. Ask the user if you do not know them.")
+                # Runs drop every unlocked destination, so with none locked the write has nowhere to go.
+                if destinations and len(unset) == len(destinations):
+                    raise ToolError(f"{tool} must have at least one of {', '.join(destinations)} in locked, with the user's exact values. Ask the user if you do not know them.")
+        # The same job again would run twice (two emails for every one): send the model back to the user instead.
+        key = _trigger_key(trigger_kind, trigger, timezone)
+        for saved_name, status, kind, saved_key, saved_tools, saved_locked in existing:
+            if (kind, saved_key, saved_tools, saved_locked) == (trigger_kind, key, set(chosen), locked):
+                if status == "active":
+                    raise ToolError(f'"{saved_name}" is already set up and live. Tell the user it\'s done instead of proposing it again.')
+                raise ToolError(f'"{saved_name}" already exists (turned off). Tell the user they can turn it on in Your automations.')
         return "The user is now being shown the proposal. Stop here and wait for their answer.", {"approval": {
             "kind": "automation", "status": "pending", "name": name, "task": task, "trigger_text": trigger_text,
             "trigger_kind": trigger_kind, "trigger": trigger, "tools": chosen, "tool_labels": labels, "locked": locked,
@@ -222,6 +277,7 @@ async def build_describe_turn(db, agent, session, timezone: str) -> dict:
         f"Apps the platform offers that this agent is not connected to: {', '.join(missing_apps)}." if missing_apps else "",
         f"The user's time zone is {timezone}; it is now {now} there.",
         RULES,
+        _after_decision(newest),
     ) if part)
     return {
         "system_prompt": SYSTEM_PROMPT.format(name=agent.name),

@@ -14,6 +14,8 @@ function validate(fields, values) {
   for (const field of fields) {
     const value = values[field.name]
     if (field.required && !String(value ?? '').trim()) errors[field.name] = `Fill in ${field.label.toLowerCase()}.`
+    else if (field.type === 'email' && String(value ?? '').trim() && !/^\S+@\S+\.\S+$/.test(String(value).trim()))
+      errors[field.name] = 'Enter a valid email address.'
     else if (field.type === 'number' && value !== '' && value != null && Number(value) < 0)
       errors[field.name] = 'Use a positive number.'
     else if (field.type === 'date' && value && value < today()) errors[field.name] = "This date is in the past."
@@ -36,12 +38,20 @@ function validate(fields, values) {
   return errors
 }
 
-/** The chosen values as a chat message the agent can act on, by the tool's own argument names. */
+/**
+ * The chosen values as a chat message the agent can act on: by the tool's own argument names for
+ * a search, and in the user's words (field labels, chosen option labels) for an automation.
+ */
 function toMessage(form, values) {
+  const automation = form.tool === 'automation'
+  const shown = (field) =>
+    automation && field.type === 'select'
+      ? (field.options.find((option) => String(option.value) === String(values[field.name]))?.label ?? values[field.name])
+      : values[field.name]
   const parts = form.fields
     .filter((field) => values[field.name] !== '' && values[field.name] != null)
-    .map((field) => `${field.name}: ${values[field.name]}`)
-  return `${form.title} with these details. ${parts.join('; ')}`
+    .map((field) => `${automation ? field.label : field.name}: ${shown(field)}`)
+  return automation ? `Here are the details. ${parts.join('; ')}` : `${form.title} with these details. ${parts.join('; ')}`
 }
 
 /**
@@ -54,6 +64,7 @@ export function DetailsCard({ form, disabled, onSend, onCancel }) {
     Object.fromEntries(form.fields.map((field) => [field.name, form.values[field.name] ?? (field.type === 'select' ? field.options[0]?.value : '')])),
   )
   const [errors, setErrors] = useState({})
+  const automation = form.tool === 'automation'
 
   const set = (name, value) => setValues((current) => ({ ...current, [name]: value }))
 
@@ -114,7 +125,7 @@ export function DetailsCard({ form, disabled, onSend, onCancel }) {
         })}
       </div>
       <div className="flex flex-wrap justify-end gap-2">
-        {form.kind === 'ask' ? (
+        {automation ? null : form.kind === 'ask' ? (
           <Button type="button" variant="outline" disabled={disabled} onClick={() => onSend(SKIP_MESSAGE)}>
             Skip filters
           </Button>
@@ -124,7 +135,7 @@ export function DetailsCard({ form, disabled, onSend, onCancel }) {
           </Button>
         )}
         <Button type="submit" disabled={disabled}>
-          Search
+          {automation ? 'Continue' : 'Search'}
         </Button>
       </div>
     </form>

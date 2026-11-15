@@ -44,6 +44,8 @@ async def test_a_valid_proposal_shows_the_card(client, user_a, live_chat, use_mo
     assert approval["tool_labels"] == {"convert_currency": "Currency conversion", "gmail_send_email": "Gmail Send Email (Gmail)"}
     assert approval["name"] == "Rate mail" and approval["trigger_text"] == "every 10 minutes"
     assert len(model.received) == 1  # the turn ends at the card
+    # The model wrote no text: the default introduces the automation, not an action.
+    assert dict(events)["token"]["text"] == "Here's the automation. Approve it to make it live."
     assert sorted(model.bound) == ["ask_automation_details", "list_event_triggers", "propose_automation"]  # never the real tools
     assert (await saved_rows(db, conv["id"]))[-1].approval == approval
     assert composio.made("POST", "/tools/execute/GMAIL_SEND_EMAIL") == []
@@ -75,6 +77,24 @@ async def test_bad_proposals_go_back_to_the_model(client, user_a, live_chat, use
     assert (await saved_rows(db, conv["id"]))[-1].approval is None
 
 
+async def test_a_write_whose_destinations_are_all_optional_needs_one_locked(client, user_a, live_chat, use_model, composio, db, monkeypatch):  # noqa: F811
+    from tests import test_integrations
+
+    tools = list(test_integrations.GMAIL_TOOLS)
+    tools[1] = {**tools[1], "input_parameters": {**tools[1]["input_parameters"], "required": ["body"]}}  # recipient optional
+    monkeypatch.setattr(test_integrations, "GMAIL_TOOLS", tools)
+    agent, _ = live_chat
+    conv = await ready(client, user_a, agent)
+    model = scripted(call("propose_automation", **{**PROPOSAL, "locked": {"gmail_send_email": {"subject": "Rate"}}}), ["Let me fix that."])
+    use_model(model)
+    r = await send(client, user_a, conv["id"], {"message": "Set it up"})
+    assert "approval_required" not in dict(read_events(r.text))
+    assert "recipient_email" in model.received[1][-1].content
+    use_model(scripted(call("propose_automation", **PROPOSAL)))
+    await send(client, user_a, conv["id"], {"message": "To me@example.com"})
+    assert (await saved_rows(db, conv["id"]))[-1].approval["locked"] == PROPOSAL["locked"]
+
+
 async def test_event_and_watch_proposals_are_accepted(client, user_a, live_chat, use_model, composio, db):  # noqa: F811
     agent, _ = live_chat
     conv = await ready(client, user_a, agent)
@@ -90,6 +110,30 @@ async def test_event_and_watch_proposals_are_accepted(client, user_a, live_chat,
     await send(client, user_a, conv["id"], {"message": "Only unread"})
     assert (await saved_rows(db, conv["id"]))[-1].approval["trigger"] == {
         "action": "GMAIL_FETCH_EMAILS", "app": "gmail", "arguments": {"query": "is:unread"}}
+
+
+async def test_a_watch_needs_the_actions_required_arguments(client, user_a, live_chat, use_model, composio, db, monkeypatch):  # noqa: F811
+    from tests import test_integrations
+
+    tools = list(test_integrations.GMAIL_TOOLS)
+    tools[0] = {**tools[0], "input_parameters": {**tools[0]["input_parameters"], "required": ["query"]}}
+    monkeypatch.setattr(test_integrations, "GMAIL_TOOLS", tools)
+    agent, _ = live_chat
+    conv = await ready(client, user_a, agent)
+    for arguments in ({}, {"query": " "}):
+        trigger = {"action": "gmail_fetch_emails", "arguments": arguments}
+        model = scripted(call("propose_automation", **{**PROPOSAL, "trigger_kind": "watch", "trigger": trigger}), ["Let me fix that."])
+        use_model(model)
+        r = await send(client, user_a, conv["id"], {"message": "Watch mail"})
+        assert "approval_required" not in dict(read_events(r.text))
+        problem = model.received[1][-1].content
+        assert "query" in problem and "authenticated user" in problem
+        assert (await saved_rows(db, conv["id"]))[-1].approval is None
+    for value in ("is:unread", False, 0):  # a false or zero value is a value
+        trigger = {"action": "gmail_fetch_emails", "arguments": {"query": value}}
+        use_model(scripted(call("propose_automation", **{**PROPOSAL, "trigger_kind": "watch", "trigger": trigger})))
+        await send(client, user_a, conv["id"], {"message": "Only unread"})
+        assert (await saved_rows(db, conv["id"]))[-1].approval["trigger"]["arguments"] == {"query": value}
 
 
 async def test_a_cron_schedule_gets_the_chat_time_zone(client, user_a, live_chat, use_model, composio, db):  # noqa: F811
@@ -126,6 +170,9 @@ async def test_details_form_card(client, user_a, live_chat, use_model, composio,
     r = await send(client, user_a, conv["id"], {"message": "Email me the rate"})
     assert [name for name, _ in read_events(r.text)] == ["tool_start", "tool_end", "token", "done"]
     assert len(model.received) == 1  # waits for the user's answers
+    # The model wrote no text: the default speaks about setting up, not about search results.
+    assert dict(read_events(r.text))["token"]["text"] == "I need a few details to set this up."
+    assert (await saved_rows(db, conv["id"]))[-1].content == "I need a few details to set this up."
     form = (await saved_rows(db, conv["id"]))[-1].form
     assert form["kind"] == "ask" and form["tool"] == "automation" and form["title"] == "A few details"
     assert form["fields"][0] == {"name": "recipient", "label": "Send it to", "type": "email", "required": True, "options": []}

@@ -27,6 +27,9 @@ logger = logging.getLogger(__name__)
 # Saved as the reply when the user stops after results arrived but before any text was written.
 STOPPED_TEXT = "Stopped before I wrote a reply. What I had found is below."
 APPROVAL_TEXT = "This needs your approval before I do it."
+# The same defaults in the "Describe your automation" chat, where nothing is searched or done yet.
+AUTOMATION_ASK_TEXT = "I need a few details to set this up."
+PROPOSAL_TEXT = "Here's the automation. Approve it to make it live."
 MODEL_ERROR_MESSAGE = "The model couldn't reply. Check your API key and try again."
 
 _in_flight: set[uuid.UUID] = set()
@@ -239,7 +242,10 @@ async def run_turn(
                         yield sse("tool_end", {"id": message.tool_call_id, "ok": ok, **({"card": card} if card else {})})
         if not parts and (asked or approval):
             # The model asked with a form or for approval and wrote nothing itself: say why.
-            default = DEFAULT_ASK_TEXT if asked else APPROVAL_TEXT
+            if asked:
+                default = AUTOMATION_ASK_TEXT if asked.get("tool") == "automation" else DEFAULT_ASK_TEXT
+            else:
+                default = PROPOSAL_TEXT if approval.get("kind") == "automation" else APPROVAL_TEXT
             parts.append(default)
             yield sse("token", {"text": default})
         text = "".join(parts)

@@ -5,7 +5,7 @@ import time
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import select
 
-from app.automations.run import MAX_EVENT_CHARS, run_automation, spawn_run
+from app.automations.run import bounded_event, run_automation, spawn_run
 from app.core.config import get_settings
 from app.db.base import session_factory
 from app.db.models import Agent, Automation
@@ -48,12 +48,9 @@ async def _start_runs(event: dict) -> None:
             select(Automation.id).join(Agent, Agent.id == Automation.agent_id).where(
                 Automation.status == "active", Agent.status == "live", Automation.trigger_kind == "event",
                 Automation.trigger["composio_trigger_id"].astext == str(trigger_id)))).all()
-    if not isinstance(data, dict):
-        data = {"data": data}
     # Cut here as well as in the run: the stored copy of the event is bounded too.
-    if len(json.dumps(data, default=str)) > MAX_EVENT_CHARS:
-        data = {"truncated": json.dumps(data, default=str)[:MAX_EVENT_CHARS]}
-    key = str(meta.get("log_id") or event.get("id") or "")
+    data = bounded_event(data if isinstance(data, dict) else {"data": data})
+    key =str(meta.get("log_id") or event.get("id") or "")
     for id_ in ids:
         spawn_run(run_automation(id_, "event", event=data, event_key=key or None, wait=True))
 

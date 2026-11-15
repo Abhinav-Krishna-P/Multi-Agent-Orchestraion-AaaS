@@ -231,7 +231,8 @@ async def chat(
             if session.title == DEFAULT_TITLE:
                 session.title = " ".join(text.split())[:TITLE_LENGTH]
             await db.commit()
-            posthog.capture("message_sent", session.user_id, agent_id=agent.id, session_id=session.id)
+            if session.purpose == "chat":  # describing an automation is not chatting with the agent
+                posthog.capture("message_sent", session.user_id, agent_id=agent.id, session_id=session.id)
         # Read everything the stream needs now; the stream uses its own database sessions.
         turn = {"prior_tools": prior_tools, "session_id": session.id, "system_prompt": agent.system_prompt, "summary": session.summary}
         if session.purpose == "automation":
