@@ -257,11 +257,11 @@ async def test_long_app_replies_are_cut(client, user_a, live_chat, use_model, co
 
 
 async def test_chat_goes_on_without_apps_when_composio_cannot_list_actions(client, user_a, live_chat, use_model, composio, web):  # noqa: F811
-    from app.tools import http
+    from app.core import cache
 
     agent, session = live_chat
     await gmail_ready(client, user_a, agent["id"])
-    http._cache.clear()  # nothing remembered: the chat has to ask Composio for the actions
+    cache.reset()  # nothing remembered: the chat has to ask Composio for the actions
     web.replies[HOST] = httpx.ConnectError("down")
     model = scripted(["Hi."])
     use_model(model)

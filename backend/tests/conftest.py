@@ -34,6 +34,7 @@ os.environ["SUMMARY_MODEL"] = "test-summary-model"
 os.environ["LANGSMITH_TRACING"] = "false"
 os.environ["CHUNKING_METHOD"] = "recursive"
 os.environ["SCHEDULER_ENABLED"] = "false"
+os.environ["REDIS_URL"] = ""  # tests use the in-process cache, never the owner's Redis
 os.environ["DEFAULT_COUNTRY"] = "in"
 os.environ["DEFAULT_CURRENCY"] = "INR"
 for _name in ("POSTHOG_API_KEY", "POSTHOG_PERSONAL_API_KEY", "POSTHOG_PROJECT_ID"):  # tests never send an event
@@ -50,6 +51,13 @@ def _migrated_database():
     cfg = Config(str(BACKEND_DIR / "alembic.ini"))
     cfg.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
     command.upgrade(cfg, "head")
+
+
+@pytest.fixture(autouse=True)
+def _empty_cache():
+    from app.core import cache
+
+    cache.reset()
 
 
 @pytest.fixture(autouse=True)

@@ -245,6 +245,7 @@ async def chat(
             turn["track"] = {"user_id": str(session.user_id), "agent_id": str(agent.id), "session_id": str(session.id),
                              "search_mode": agent.search_mode, "tool_kinds": ts.kinds}
         provider, model_id = agent.llm_provider, agent.llm_model
+        agent_id, purpose = agent.id, session.purpose
     except BaseException:
         runner.end(session.id)
         raise
@@ -254,4 +255,6 @@ async def chat(
     except Exception as exc:
         runner.logger.warning("A model could not be set up: %s", type(exc).__name__)
         return TurnResponse(runner.failed_turn(), session.id)
-    return TurnResponse(runner.run_turn(model=model, **turn), session.id)
+    # Only chat replies use the model-step cache: an automation's describe chat is left out.
+    scope = f"{agent_id}:{provider}:{model_id}" if purpose == "chat" else None
+    return TurnResponse(runner.run_turn(model=model, cache_scope=scope, **turn), session.id)

@@ -3,11 +3,12 @@ into a line the model can repeat to the user, and a short memory of identical ca
 import datetime as dt
 import json as json_module
 import logging
-import time
 from typing import Any
 
 import httpx
 from langchain_core.tools import tool
+
+from app.core import cache as shared_cache  # `cache` is fetch_json's on/off argument
 
 logger = logging.getLogger(__name__)
 # httpx logs every request's full URL at INFO, and several services take their key in the
@@ -16,14 +17,10 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 TIMEOUT_SECONDS = 15
 CACHE_SECONDS = 600
-CACHE_MAX = 500
 MAX_RESULTS = 5
 LIST_RESULTS = 8  # products, stays and images are shown as a row of picture cards: enough to fill it
 
 transport: httpx.AsyncBaseTransport | None = None  # tests put a stand-in here
-# shortcut: per-process memory, lost on restart and not shared between workers; move to
-# Redis when the backend runs as more than one process.
-_cache: dict[str, tuple[float, Any]] = {}
 
 
 class ToolError(Exception):
@@ -60,15 +57,17 @@ async def fetch_json(
     method: str = "GET",
     is_error=None,
     cache: bool = True,
+    cache_seconds: int = CACHE_SECONDS,
 ) -> Any:
     """Calls a service and returns its JSON. Keys go in `secret_params` or `headers`: those
     are sent but never logged and never part of the cache key. `is_error(data)` spots a
     failure that a service reports inside a normal reply (a used-up quota, for example).
     `cache=False` is for calls that do something or whose answer changes: they always go out."""
-    key = json_module.dumps([service, method, url, params, json], sort_keys=True, default=str)
-    remembered = _cache.get(key) if cache else None
-    if remembered and remembered[0] > time.monotonic():
-        return remembered[1]
+    key = "http:" + shared_cache.digest(service, method, url, params, json)
+    if cache:
+        remembered = await shared_cache.get_json(key)
+        if remembered is not None:
+            return remembered
     try:
         async with httpx.AsyncClient(timeout=TIMEOUT_SECONDS, transport=transport) as client:
             response = await client.request(
@@ -93,9 +92,7 @@ async def fetch_json(
         logger.warning("%s call failed: %s", service, problem)
         raise unavailable(service) from None
     if cache:
-        if len(_cache) >= CACHE_MAX:
-            _cache.clear()
-        _cache[key] = (time.monotonic() + CACHE_SECONDS, data)
+        await shared_cache.set_json(key, data, cache_seconds)
     return data
 
 

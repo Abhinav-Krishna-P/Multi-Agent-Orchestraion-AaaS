@@ -2,7 +2,6 @@
 import asyncio
 import datetime as dt
 import math
-import time
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -12,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analytics import posthog
 from app.api.deps import get_owned_agent
+from app.core import cache
 from app.core.errors import ApiError
 from app.db.base import get_db
 from app.db.models import Agent, Automation
@@ -23,7 +23,6 @@ router = APIRouter()
 
 RANGES = {"7d": 7, "30d": 30, "90d": 90}
 CACHE_SECONDS = 60
-_cache: dict[tuple[str, str, str], tuple[float, dict]] = {}
 
 # Every query is limited to one agent of one user, over the period. All values are
 # placeholders: nothing from the request is ever written into the query text. The period starts
@@ -202,10 +201,8 @@ async def _ask(agent: Agent, range_: str, tz: str, zone: ZoneInfo, queries: tupl
         raise ApiError(503, "analytics_unavailable", "Analytics can't be reached right now. Try again in a moment.") from error
 
 
-def _remember(key: tuple[str, str, str], result: dict) -> dict:
-    if len(_cache) > 500:
-        _cache.clear()
-    _cache[key] = (time.monotonic() + CACHE_SECONDS, result)
+async def _remember(key: str, result: dict) -> dict:
+    await cache.set_json(key, result, CACHE_SECONDS)
     return result
 
 
@@ -218,12 +215,11 @@ async def agent_analytics(
     zone = _zone(tz)
     if not posthog.queries_enabled():
         return {"enabled": False}
-    key = (str(agent.id), range_, tz)
-    remembered = _cache.get(key)
-    if remembered and remembered[0] > time.monotonic():
-        return remembered[1]
+    key = f"analytics:{agent.id}:chat:{range_}:{tz}"
+    if (remembered := await cache.get_json(key)) is not None:
+        return remembered
     totals, days, tools = await _ask(agent, range_, tz, zone, (TOTALS, DAYS, TOOLS))
-    return _remember(key, {"enabled": True, "range": range_, **_shape(totals, days, tools, RANGES[range_], zone)})
+    return await _remember(key, {"enabled": True, "range": range_, **_shape(totals, days, tools, RANGES[range_], zone)})
 
 
 @router.get("/agents/{agent_id}/analytics/automations")
@@ -236,14 +232,13 @@ async def automation_analytics(
     zone = _zone(tz)
     if not posthog.queries_enabled():
         return {"enabled": False}
-    key = (str(agent.id), "automations:" + range_, tz)
-    remembered = _cache.get(key)
-    if remembered and remembered[0] > time.monotonic():
-        return remembered[1]
+    key = f"analytics:{agent.id}:automations:{range_}:{tz}"
+    if (remembered := await cache.get_json(key)) is not None:
+        return remembered
     totals, days, table = await _ask(agent, range_, tz, zone, (AUTO_TOTALS, AUTO_DAYS, AUTO_TABLE))
     # Names and status are the database's, so a rename or pause shows at once and a deleted one is told apart.
     rows = (await db.scalars(select(Automation).where(Automation.agent_id == agent.id))).all()
     known = {str(row.id): row for row in rows}
     active_now = sum(row.status == "active" for row in rows)
     shaped = _shape_automations(totals, days, table, RANGES[range_], zone, known, active_now)
-    return _remember(key, {"enabled": True, "range": range_, **shaped})
+    return await _remember(key, {"enabled": True, "range": range_, **shaped})

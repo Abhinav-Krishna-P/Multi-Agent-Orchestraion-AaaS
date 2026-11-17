@@ -17,3 +17,4 @@ chromadb-client
 rank-bm25
 tzdata
 croniter
+redis>=8.1

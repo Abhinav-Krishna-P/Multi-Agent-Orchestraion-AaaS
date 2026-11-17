@@ -51,7 +51,6 @@ def web(monkeypatch):
 
     service = Service()
     monkeypatch.setattr(http, "transport", httpx.MockTransport(service.handler))
-    http._cache.clear()
     return service
 
 
@@ -83,12 +82,36 @@ async def test_fetch_json_returns_data_and_remembers_identical_calls(web):
     assert len(web.requests) == 2
 
 
-async def test_secrets_are_not_in_the_cache_key(web):
+async def test_secrets_are_not_in_the_cache_key(web, monkeypatch):
+    from app.core import cache
     from app.tools import http
 
+    keys = []
+    real_set = cache.set_json
+
+    async def spy(key, value, seconds):
+        keys.append(key)
+        await real_set(key, value, seconds)
+
+    monkeypatch.setattr(cache, "set_json", spy)
     web.replies["api.example.com"] = {"ok": True}
     await http.fetch_json("Example", "https://api.example.com/x", secret_params={"key": "s3cret"}, headers={"X-API-KEY": "h1dden"})
-    assert all("s3cret" not in key and "h1dden" not in key for key in http._cache)
+    assert len(keys) == 1 and keys[0].startswith("http:")
+    assert "s3cret" not in keys[0] and "h1dden" not in keys[0] and "example.com" not in keys[0]  # hashed
+
+
+async def test_action_calls_are_never_cached(web, monkeypatch):
+    from app.core import cache
+    from app.tools import http
+
+    async def no_writes(key, value, seconds):
+        raise AssertionError("an action call was cached")
+
+    monkeypatch.setattr(cache, "set_json", no_writes)
+    web.replies["api.example.com"] = {"ok": True}
+    for _ in range(2):
+        await http.fetch_json("Example", "https://api.example.com/do", method="POST", json={"a": 1}, cache=False)
+    assert len(web.requests) == 2
 
 
 @pytest.mark.parametrize(
@@ -278,9 +301,9 @@ async def test_stock_quote_and_unknown_symbol(web):
     data = data_of(await run("get_stock_quote", symbol="aapl"))
     assert web.params() == {"symbol": "AAPL", "token": "test-finnhub-key"}
     assert data == {"symbol": "AAPL", "price": 190.5, "change": 1.5, "change_percent": 0.79, "high": 191.0, "low": 188.0, "open": 189.0, "previous_close": 189.0}
-    from app.tools import http
+    from app.core import cache
 
-    http._cache.clear()
+    cache.reset()
     web.replies["finnhub.io"] = {"c": 0, "d": None, "dp": None, "h": 0, "l": 0, "o": 0, "pc": 0, "t": 0}
     assert await run("get_stock_quote", symbol="ZZZZ") == "Finnhub found no results."
 

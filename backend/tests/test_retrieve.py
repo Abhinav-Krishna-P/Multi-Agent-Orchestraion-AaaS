@@ -2,6 +2,7 @@ import uuid
 
 import pytest
 
+from tests.conftest import USER_A_ID
 from tests.fakes import scripted
 from tests.rag_fakes import make_pdf
 from tests.test_agents import create_agent
@@ -121,6 +122,122 @@ async def test_documents_that_are_not_ready_are_ignored(client, user_a, kb, db):
     await db.commit()
     hits = await run_search(agent, rag_, "standard shipping business days", "hybrid", min_similarity=0.05)
     assert all(h.document_name != "Shipping" for h in hits)
+
+
+# --- the shared cache ------------------------------------------------------------------
+
+SHIPPING_Q = "how many days does standard shipping take"
+
+
+async def test_repeated_search_is_served_from_cache(kb):
+    agent, rag_ = kb
+    first = await run_search(agent, rag_, SHIPPING_Q, min_similarity=0.05)
+    queries = rag_.store.queries
+    second = await run_search(agent, rag_, SHIPPING_Q, min_similarity=0.05)
+    assert first and second == first
+    assert rag_.store.queries == queries and rag_.embedder.query_calls == [SHIPPING_Q]
+
+
+async def test_a_new_ready_document_makes_the_next_search_miss(client, user_a, kb):
+    agent, rag_ = kb
+    assert await run_search(agent, rag_, "warranty repairs", min_similarity=0.05) == []
+    await paste(client, user_a, agent["id"], text="Every product has a two year warranty covering repairs.", title="Warranty")
+    hits = await run_search(agent, rag_, "warranty repairs", min_similarity=0.05)
+    assert [h.document_name for h in hits][:1] == ["Warranty"]
+
+
+async def test_a_deleted_document_is_never_served_from_cache(client, user_a, kb):
+    agent, rag_ = kb
+    query = "returns accepted original receipt"
+    assert "Returns" in {h.document_name for h in await run_search(agent, rag_, query, min_similarity=0.05)}
+    docs = (await client.get(f"/agents/{agent['id']}/documents", headers=user_a)).json()
+    returns = next(d for d in docs if d["filename"] == "Returns")
+    assert (await client.delete(f"/agents/{agent['id']}/documents/{returns['id']}", headers=user_a)).status_code == 204
+    assert "Returns" not in {h.document_name for h in await run_search(agent, rag_, query, min_similarity=0.05)}
+
+
+async def test_a_document_leaving_and_rejoining_ready_changes_the_results(client, user_a, kb, db):
+    from sqlalchemy import update
+
+    from app.db.models import Document
+
+    agent, rag_ = kb
+    query = "standard shipping business days"
+    assert "Shipping" in {h.document_name for h in await run_search(agent, rag_, query, min_similarity=0.05)}
+    for status, present in (("processing", False), ("ready", True)):
+        await db.execute(update(Document).where(Document.filename == "Shipping").values(status=status))
+        await db.commit()
+        names = {h.document_name for h in await run_search(agent, rag_, query, min_similarity=0.05)}
+        assert ("Shipping" in names) is present
+
+
+async def test_a_document_still_processing_leaves_cached_results_alone(client, user_a, kb, db):
+    from app.db.models import Document
+
+    agent, rag_ = kb
+    first = await run_search(agent, rag_, SHIPPING_Q, min_similarity=0.05)
+    queries = rag_.store.queries
+    db.add(Document(agent_id=uuid.UUID(agent["id"]), user_id=uuid.UUID(USER_A_ID), filename="Later", source_type="paste",
+                    status="processing", content_hash="later", embedding_model="fake-embedding", chunking_method="recursive"))
+    await db.commit()
+    assert await run_search(agent, rag_, SHIPPING_Q, min_similarity=0.05) == first
+    assert rag_.store.queries == queries
+
+
+async def test_results_are_not_kept_when_the_documents_change_during_the_search(kb, db, monkeypatch):
+    from sqlalchemy import update
+
+    from app.db.models import Document
+    from app.rag import retrieve
+
+    agent, rag_ = kb
+    await db.execute(update(Document).where(Document.filename == "Shipping").values(status="processing"))
+    await db.commit()
+    real_fingerprint = retrieve._fingerprint
+    calls = []
+
+    async def shipping_becomes_ready_right_after(db_, agent_id):
+        fingerprint = await real_fingerprint(db_, agent_id)
+        if not calls:  # first read only: Shipping turns ready before the search reads the chunks
+            await db.execute(update(Document).where(Document.filename == "Shipping").values(status="ready"))
+            await db.commit()
+        calls.append(fingerprint)
+        return fingerprint
+
+    monkeypatch.setattr(retrieve, "_fingerprint", shipping_becomes_ready_right_after)
+    first = await run_search(agent, rag_, SHIPPING_Q, min_similarity=0.05)
+    assert "Shipping" in {h.document_name for h in first}
+    await db.execute(update(Document).where(Document.filename == "Shipping").values(status="processing"))
+    await db.commit()  # back to the ready set the first search's key was made from
+    again = await run_search(agent, rag_, SHIPPING_Q, min_similarity=0.05)
+    assert "Shipping" not in {h.document_name for h in again}
+
+
+async def test_query_embedding_is_reused_after_a_document_change(client, user_a, kb):
+    agent, rag_ = kb
+    await run_search(agent, rag_, SHIPPING_Q, min_similarity=0.05)
+    queries = rag_.store.queries
+    await paste(client, user_a, agent["id"], text="Express shipping takes one day.", title="Express")
+    await run_search(agent, rag_, SHIPPING_Q, min_similarity=0.05)
+    assert rag_.embedder.query_calls == [SHIPPING_Q] and rag_.store.queries == queries + 1
+
+
+async def test_search_cache_is_per_agent(client, user_a, kb):
+    agent, rag_ = kb
+    other = await create_agent(client, user_a, name="Other")
+    await paste(client, user_a, other["id"], text="Standard shipping takes nine business days by sea.", title="Sea")
+    mine = await run_search(agent, rag_, SHIPPING_Q, min_similarity=0.05)
+    theirs = await run_search(other, rag_, SHIPPING_Q, min_similarity=0.05)
+    assert {h.document_name for h in theirs} == {"Sea"} and "Sea" not in {h.document_name for h in mine}
+
+
+async def test_unknown_document_is_not_cached(kb):
+    from app.rag.retrieve import UnknownDocument
+
+    agent, rag_ = kb
+    for _ in range(2):
+        with pytest.raises(UnknownDocument):
+            await run_search(agent, rag_, "shipping", document_name="nope.pdf")
 
 
 async def test_filter_by_document_name_and_page(client, user_a, kb):

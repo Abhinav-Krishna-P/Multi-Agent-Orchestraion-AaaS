@@ -15,6 +15,7 @@ class FakeEmbedder:
 
     def __init__(self):
         self.calls: list[list[str]] = []
+        self.query_calls: list[str] = []
         self.error: Exception | None = None
         self.before_return = None  # optional async hook, run after "embedding" finishes
 
@@ -36,6 +37,7 @@ class FakeEmbedder:
     async def embed_query(self, text: str) -> list[float]:
         if self.error:
             raise self.error
+        self.query_calls.append(text)
         return self._vector(text)
 
 
@@ -43,6 +45,7 @@ class FakeVectorStore:
     def __init__(self):
         self.items: dict[str, tuple[list[float], dict]] = {}
         self.fail = False
+        self.queries = 0
 
     def _check(self):
         if self.fail:
@@ -55,6 +58,7 @@ class FakeVectorStore:
 
     async def query(self, vector, agent_id, k, filters=None):
         self._check()
+        self.queries += 1
         wanted = {"agent_id": str(agent_id), **(filters or {})}
         scored = [
             (id_, sum(a * b for a, b in zip(vector, stored)))

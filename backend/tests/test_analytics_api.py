@@ -11,13 +11,11 @@ from tests.test_agents import create_agent
 def queries(monkeypatch):
     """PostHog's query API: answers each query by which table it groups, and records what was asked."""
     from app.analytics import posthog
-    from app.api import analytics
     from app.core.config import get_settings
 
     settings = get_settings()
     monkeypatch.setattr(settings, "posthog_personal_api_key", "phx_test")
     monkeypatch.setattr(settings, "posthog_project_id", "123")
-    analytics._cache.clear()
     today = dt.datetime.now(dt.UTC).date()
     asked: list[tuple[str, dict]] = []
     answers = {
@@ -130,6 +128,51 @@ async def test_posthog_down(client, user_a, queries, monkeypatch):
     agent = await create_agent(client, user_a)
     r = await client.get(f"/agents/{agent['id']}/analytics", headers=user_a)
     assert r.status_code == 503 and r.json()["detail"]["code"] == "analytics_unavailable"
+
+
+async def test_a_failed_read_is_not_cached(client, user_a, queries, monkeypatch):
+    from app.analytics import posthog
+    from app.tools.http import unavailable
+
+    working = posthog.query
+
+    async def down(sql, values):
+        raise unavailable("PostHog")
+
+    agent = await create_agent(client, user_a)
+    monkeypatch.setattr(posthog, "query", down)
+    assert (await client.get(f"/agents/{agent['id']}/analytics", headers=user_a)).status_code == 503
+    monkeypatch.setattr(posthog, "query", working)
+    r = await client.get(f"/agents/{agent['id']}/analytics", headers=user_a)
+    assert r.status_code == 200 and r.json()["totals"]["messages"] == 12
+
+
+@pytest.fixture
+def stored(monkeypatch):
+    """What the endpoints put in the shared cache: (key, seconds)."""
+    from app.core import cache
+
+    seen = []
+    real_set = cache.set_json
+
+    async def spy(key, value, seconds):
+        seen.append((key, seconds))
+        await real_set(key, value, seconds)
+
+    monkeypatch.setattr(cache, "set_json", spy)
+    return seen
+
+
+async def test_chat_numbers_are_kept_in_the_shared_cache_for_60s(client, user_a, queries, stored):
+    agent = await create_agent(client, user_a)
+    await client.get(f"/agents/{agent['id']}/analytics?range=7d", headers=user_a)
+    assert stored == [(f"analytics:{agent['id']}:chat:7d:UTC", 60)]
+
+
+async def test_automation_numbers_are_kept_in_the_shared_cache_for_60s(client, user_a, queries_auto, stored):
+    agent = await create_agent(client, user_a)
+    await client.get(f"/agents/{agent['id']}/analytics/automations?range=30d", headers=user_a)
+    assert stored == [(f"analytics:{agent['id']}:automations:30d:UTC", 60)]
 
 
 async def test_days_follow_the_viewers_time_zone(client, user_a, queries):

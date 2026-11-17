@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     test_database_url: str | None = None
     db_null_pool: bool = False
     scheduler_enabled: bool = True
+    redis_url: str = ""  # empty: each process keeps its own in-memory cache
 
     supabase_url: str = ""
     supabase_jwt_secret: str | None = None

@@ -27,6 +27,9 @@ WEBHOOK_TOLERANCE = 300  # seconds a signed event may be old (or early) before i
 MAX_ACTION_NAME = 64  # the longest tool name a model accepts
 MAX_PAGES = 10  # of an app's action list; a paging fault at Composio must not loop forever
 BUILD_SECONDS = 5  # how long a chat reply waits for Composio before going on without apps
+# The only cached Composio calls are the action and trigger lists: they rarely change, and a cold
+# list once took 8.4 s and left a chat without any app tools.
+LIST_CACHE_SECONDS = 6 * 3600
 
 
 @dataclass(frozen=True)
@@ -63,7 +66,7 @@ def enabled() -> bool:
 async def _call(method: str, path: str, *, params: dict | None = None, json: dict | None = None, cache: bool = False, base: str = BASE_URL):
     return await fetch_json(
         SERVICE, f"{base}{path}", method=method, params=params, json=json,
-        headers={"x-api-key": get_settings().composio_api_key}, cache=cache,
+        headers={"x-api-key": get_settings().composio_api_key}, cache=cache, cache_seconds=LIST_CACHE_SECONDS,
     )
 
 

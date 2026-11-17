@@ -17,7 +17,7 @@ from sqlalchemy import func, select, update
 
 from app.agent.context import HISTORY_LIMIT, build_messages
 from app.analytics import posthog
-from app.agent.graph import AGENT_NODE, MAX_TOOL_ROUNDS, RECURSION_LIMIT, TOOLS_NODE, build_graph
+from app.agent.graph import AGENT_NODE, MAX_TOOL_ROUNDS, RECURSION_LIMIT, TOOLS_NODE, build_graph, chunk_text
 from app.db.base import session_factory
 from app.db.models import ChatSession, Message
 from app.tools.forms import DEFAULT_ASK_TEXT, form_spec
@@ -66,21 +66,6 @@ async def wait_for_background() -> None:
 
 def sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
-
-
-def chunk_text(chunk) -> str:
-    """The visible text of a streamed chunk. Content is a string or a list of parts;
-    parts that are not text (such as a model's thinking) are left out."""
-    content = chunk.content
-    if isinstance(content, str):
-        return content
-    pieces = []
-    for part in content:
-        if isinstance(part, str):
-            pieces.append(part)
-        elif isinstance(part, dict) and part.get("type") == "text":
-            pieces.append(part.get("text", ""))
-    return "".join(pieces)
 
 
 async def _recent_history(session_id: uuid.UUID) -> list[Message]:
@@ -147,6 +132,7 @@ async def run_turn(
     forms: dict | None = None,
     prior_tools: Sequence[dict] = (),
     track: dict | None = None,
+    cache_scope: str | None = None,
 ) -> AsyncIterator[str]:
     """Answers the chat's last user message. The caller holds the chat's claim (try_begin).
 
@@ -178,7 +164,8 @@ async def run_turn(
             yield sse("tool_start", {"id": tool_id, "label": tool["label"]})
             yield sse("tool_end", {"id": tool_id, "ok": tool["ok"]})
         history = await _recent_history(session_id)
-        graph = build_graph(model, tools)
+        graph = build_graph(model, tools, cache_scope=cache_scope)
+        streamed = False  # the current model step sent text word by word
         stream = graph.astream(
             {"messages": build_messages(system_prompt, summary, history, extra_instruction)},
             stream_mode=["messages", "updates"],
@@ -190,12 +177,18 @@ async def run_turn(
                 if metadata.get("langgraph_node") == AGENT_NODE and isinstance(chunk, AIMessageChunk):
                     piece = chunk_text(chunk)
                     if piece:
+                        streamed = True
                         parts.append(piece)
                         yield sse("token", {"text": piece})
                 continue
             for node, update_ in payload.items():
                 messages = (update_ or {}).get("messages", [])
                 if node == AGENT_NODE:
+                    # A reply from the cache arrives whole, not word by word: send its text now.
+                    if not streamed and (whole := chunk_text(messages[-1])):
+                        parts.append(whole)
+                        yield sse("token", {"text": whole})
+                    streamed = False
                     tool_calls = getattr(messages[-1], "tool_calls", None) or []
                     if tool_calls:
                         rounds += 1

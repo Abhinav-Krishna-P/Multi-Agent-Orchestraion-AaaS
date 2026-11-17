@@ -1,4 +1,5 @@
 """FastAPI application."""
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -7,13 +8,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.automations import scheduler
 from app.automations.run import sweep_interrupted_runs
 from app.api import analytics, automations, integrations, agents, chat, documents, llm_keys, me, personas, sessions, tools, webhooks
+from app.core import cache
 from app.core.config import export_tracing_env, get_settings
 from app.core.errors import ApiError, api_error_handler
 from app.rag.ingest import sweep_interrupted_documents
 
 
+logger = logging.getLogger("uvicorn.error")  # uvicorn's logger is the one that prints INFO at startup
+
+
 @asynccontextmanager
 async def _lifespan(_: FastAPI):
+    logger.info("Cache: %s", cache.backend_name())
     # Document processing runs in background tasks, which a restart kills.
     await sweep_interrupted_documents()
     await sweep_interrupted_runs()
@@ -21,6 +27,7 @@ async def _lifespan(_: FastAPI):
         scheduler.start()
     yield
     await scheduler.stop()
+    await cache.close()
 
 
 def create_app() -> FastAPI:

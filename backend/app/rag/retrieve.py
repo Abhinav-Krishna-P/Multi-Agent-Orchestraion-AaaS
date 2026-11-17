@@ -4,6 +4,7 @@ Every search is limited to one agent's ready documents, and can be narrowed furt
 metadata (a document's name, a page). read_document() fetches by metadata alone, with no
 similarity involved.
 """
+import dataclasses
 import re
 import uuid
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ from rank_bm25 import BM25Okapi
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import cache
 from app.db.models import Document, DocumentChunk
 from app.rag.embeddings import Embedder
 from app.rag.vector_store import VectorStore
@@ -24,6 +26,8 @@ READ_LIMIT = 8
 # Below this best cosine similarity, a search counts as "nothing relevant". Tuned with the
 # LangSmith tests (backend/evals).
 MIN_SIMILARITY = 0.60
+SEARCH_CACHE_SECONDS = 3600
+EMBED_CACHE_SECONDS = 7 * 24 * 3600
 
 
 @dataclass(frozen=True)
@@ -82,6 +86,14 @@ async def document_names(db: AsyncSession, agent_id: uuid.UUID) -> list[str]:
     return sorted(rows.all())
 
 
+async def _fingerprint(db: AsyncSession, agent_id: uuid.UUID) -> str:
+    """Names the agent's set of ready documents. A ready document never changes (documents can
+    only be added or deleted), so this set decides everything a search can return: any change
+    gives a new fingerprint, and cached results for the old set are simply never read again."""
+    rows = await db.scalars(select(Document.id).where(Document.agent_id == agent_id, Document.status == "ready"))
+    return cache.digest(sorted(str(id_) for id_ in rows.all()))
+
+
 async def _resolve_name(db: AsyncSession, agent_id: uuid.UUID, document_name: str | None) -> str | None:
     """The stored spelling of a document name given in any letter case."""
     if document_name is None:
@@ -128,7 +140,14 @@ def _unique_hits(candidates: list[Hit], limit: int) -> list[Hit]:
 
 @traceable(name="kb.embed_query", process_inputs=lambda inputs: {"query": inputs.get("query")})
 async def _embed_query(embedder: Embedder, query: str) -> list[float]:
-    return await embedder.embed_query(query)
+    # Keyed by the exact text: shared by all agents, since the vector only means anything to
+    # someone who already has the text.
+    key = f"embed:{embedder.model}:{cache.digest(query)}"
+    if (vector := await cache.get_json(key)) is not None:
+        return vector
+    vector = await embedder.embed_query(query)
+    await cache.set_json(key, vector, EMBED_CACHE_SECONDS)
+    return vector
 
 
 @traceable(name="kb.dense", process_inputs=lambda inputs: {"filters": inputs.get("filters")})
@@ -165,6 +184,23 @@ async def search(
     """Up to five chunks for the query. `mode` is "hybrid", "semantic" or "keyword"."""
     min_similarity = MIN_SIMILARITY if min_similarity is None else min_similarity
     name = await _resolve_name(db, agent_id, document_name)
+    fingerprint = await _fingerprint(db, agent_id)
+    key = f"kb:{agent_id}:{fingerprint}:{cache.digest(query, mode, name.lower() if name else None, page, min_similarity)}"
+    if (cached := await cache.get_json(key)) is not None:
+        return [Hit(**hit) for hit in cached]
+    hits = await _search(agent_id, query, mode, db=db, embedder=embedder, store=store, min_similarity=min_similarity,
+                         name=name, page=page)
+    # Kept only if the documents didn't change while searching: otherwise the hits could belong to a
+    # different set than the key names (and come back after that document is deleted).
+    if await _fingerprint(db, agent_id) == fingerprint:
+        await cache.set_json(key, [dataclasses.asdict(hit) for hit in hits], SEARCH_CACHE_SECONDS)
+    return hits
+
+
+async def _search(
+    agent_id: uuid.UUID, query: str, mode: str, *, db: AsyncSession, embedder: Embedder, store: VectorStore,
+    min_similarity: float, name: str | None, page: int | None,
+) -> list[Hit]:
     rows = {str(chunk.id): (chunk, doc_name) for chunk, doc_name in await _chunks(db, agent_id, name, page)}
     if not rows:
         return []

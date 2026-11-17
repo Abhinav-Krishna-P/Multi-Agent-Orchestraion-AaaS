@@ -26,6 +26,23 @@ async def test_trigger_types_lists_and_caches(composio):
     assert len(composio.calls) == 1
 
 
+async def test_lists_are_kept_six_hours(composio, monkeypatch):
+    from app.core import cache
+    from app.integrations.composio import actions, trigger_types
+
+    seconds = []
+    real_set = cache.set_json
+
+    async def spy(key, value, ttl):
+        seconds.append(ttl)
+        await real_set(key, value, ttl)
+
+    monkeypatch.setattr(cache, "set_json", spy)
+    await actions("gmail")
+    await trigger_types("gmail")
+    assert seconds and all(ttl == 21600 for ttl in seconds)
+
+
 async def test_trigger_calls_hit_the_right_paths(composio):
     from app.integrations.composio import delete_trigger, set_trigger_enabled, upsert_trigger
 
