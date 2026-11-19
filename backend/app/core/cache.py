@@ -107,6 +107,30 @@ async def set_json(key: str, value: Any, seconds: int) -> None:
     _worked()
 
 
+async def hit(key: str, seconds: int) -> int | None:
+    """Counts one hit on `key` for a window of `seconds` and returns the count, or None if Redis failed."""
+    redis = _redis()
+    if redis is None:
+        count, expires = 1, time.monotonic() + seconds
+        if (entry := _memory.get(key)) and entry[0] > time.monotonic():
+            count, expires = int(entry[1]) + 1, entry[0]
+        elif len(_memory) >= MEMORY_MAX:
+            _memory.clear()
+        _memory[key] = (expires, str(count))
+        return count
+    if not _usable():
+        return None
+    try:
+        count = await redis.incr(PREFIX + key)
+        if count == 1:
+            await redis.expire(PREFIX + key, seconds)
+    except (RedisError, OSError, asyncio.TimeoutError) as error:
+        _failed(error)
+        return None
+    _worked()
+    return count
+
+
 async def close() -> None:
     global client
     if client is not None:

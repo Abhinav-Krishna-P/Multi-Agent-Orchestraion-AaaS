@@ -10,13 +10,13 @@ from collections.abc import Coroutine
 from datetime import UTC, datetime
 from typing import Literal
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
-from app.agent.graph import MAX_TOOL_ROUNDS, RECURSION_LIMIT, build_graph
+from app.agent import unattended
 from app.agent.llm import ModelFactory, get_model_factory, get_user_api_key
-from app.agent.runner import MODEL_ERROR_MESSAGE, chunk_text
+from app.agent.runner import MODEL_ERROR_MESSAGE
 from app.agent.toolset import build_toolset
 from app.analytics import posthog
 from app.automations import watch
@@ -161,40 +161,10 @@ async def _attempt(automation: Automation, agent: Agent, source: str, event: dic
         event = await watch.newest(automation)  # the newest real item if there is one; otherwise sample values
     messages =[SystemMessage(system + RUN_INSTRUCTION), _human_message(automation, source, event)]
     track = {"agent_id": agent.id, "automation_id": automation.id}
-    failed_tool = None
-
-    async def play() -> None:
-        nonlocal failed_tool
-        calls: dict[str, tuple[str, float]] = {}  # tool call id -> (name, when asked)
-        rounds = 0
-        graph = build_graph(model, toolset.tools)
-        async for update in graph.astream({"messages": messages}, stream_mode="updates", config={"recursion_limit": RECURSION_LIMIT}):
-            for change in update.values():
-                for message in (change or {}).get("messages", []):
-                    if isinstance(message, AIMessage):
-                        reply["text"] = chunk_text(message)
-                        rounds += bool(message.tool_calls)
-                        if rounds > MAX_TOOL_ROUNDS:
-                            raise RuntimeError("too many tool rounds")
-                        for call in message.tool_calls:
-                            used[call["id"]] = {"label": toolset.labels.get(call["name"], call["name"]), "ok": True}
-                            calls[call["id"]] = (call["name"], time.monotonic())
-                    elif isinstance(message, ToolMessage) and message.tool_call_id in used:
-                        entry, (name, asked) = used[message.tool_call_id], calls[message.tool_call_id]
-                        entry["ok"] = message.status != "error"
-                        if not entry["ok"]:
-                            failed_tool = failed_tool or name
-                        artifact = message.artifact if isinstance(message.artifact, dict) else {}
-                        entry |= {key: artifact[key] for key in ("card", "overridden") if artifact.get(key)}
-                        if name in toolset.kinds:
-                            kind, app = toolset.kinds[name]
-                            posthog.capture(
-                                "tool_called", automation.user_id, **track, tool_name=name, tool_type=kind, app=app,
-                                success=entry["ok"], duration_ms=int((time.monotonic() - asked) * 1000), source="automation",
-                            )
-
     try:
-        await asyncio.wait_for(play(), RUN_SECONDS)
+        failed_tool = await asyncio.wait_for(unattended.play(
+            model, toolset, messages, user_id=automation.user_id, track=track, source="automation", used=used,
+            reply=reply, sources=[]), RUN_SECONDS)
     except TimeoutError:
         return f"Took longer than {RUN_SECONDS // 60} minutes"
     except Exception as exc:  # only the type: provider errors can carry request details
@@ -243,7 +213,8 @@ async def _finish(started: Automation, run_id, counted: bool, error: str | None,
                 logger.info("An automation was deleted during its run; nothing saved")
                 return
             run.status, run.error, run.output = "failed" if error else "succeeded", error, text or None
-            run.tool_calls, run.finished_at = list(used.values()) or None, datetime.now(UTC)
+            run.tool_calls = [{k: v for k, v in entry.items() if k != "name"} for entry in used.values()] or None
+            run.finished_at = datetime.now(UTC)
             automation.last_run_at = run.finished_at
             if counted:
                 automation.failure_streak = automation.failure_streak + 1 if error else 0

@@ -26,11 +26,12 @@ class Toolset:
 
 async def build_toolset(
     db, agent, user_id: str, *, embedder, store, locked: dict[str, dict] | None = None, only: list[str] | None = None,
+    allowed_in: str | None = None, writes: bool = True,
 ) -> Toolset:
     """`locked=None` is a chat: app writes ask for approval and the agent may ask for details.
     With `locked` it is an automation: nobody is there, so there is no details form and app writes
     run directly with those argument values fixed. `only` keeps just those tools, and the
-    instructions that describe them."""
+    instructions that describe them. `allowed_in` and `writes` go to the app tools."""
 
     def kept(name: str) -> bool:
         return only is None or name in only
@@ -59,7 +60,7 @@ async def build_toolset(
         ts.broken_apps = [composio.APPS[row.app].name for row in connected if row.status == "expired" and row.app in composio.APPS]
         if ts.broken_apps and only is None:  # so the agent explains, instead of saying it has no such app
             ts.instructions.append(reconnect_instruction(ts.broken_apps))
-        app_tools, app_labels = await composio.build_tools(connected, user_id, locked=locked)
+        app_tools, app_labels = await composio.build_tools(connected, user_id, locked=locked, allowed_in=allowed_in, writes=writes)
         app_tools = [tool for tool in app_tools if kept(tool.name)]
         ts.tools += app_tools
         ts.labels |= app_labels

@@ -22,6 +22,10 @@ class RaisingRedis:
         self.calls += 1
         raise RedisConnectionError("down")
 
+    async def incr(self, key):
+        self.calls += 1
+        raise RedisConnectionError("down")
+
 
 class RecordingRedis:
     def __init__(self):
@@ -113,3 +117,18 @@ async def test_real_redis_round_trip(monkeypatch):
     finally:
         await real.delete("cap:t:real")
         await real.aclose()
+
+
+async def test_hit_counts_in_memory_and_expires(monkeypatch):
+    assert [await cache.hit("t:h", 60) for _ in range(3)] == [1, 2, 3]
+    later = real_now() + 61
+    monkeypatch.setattr(cache.time, "monotonic", lambda: later)
+    assert await cache.hit("t:h", 60) == 1
+
+
+async def test_hit_is_none_when_redis_fails(monkeypatch):
+    stub = RaisingRedis()
+    monkeypatch.setattr(cache, "client", stub)
+    assert await cache.hit("t:h2", 60) is None
+    assert await cache.hit("t:h2", 60) is None
+    assert stub.calls == 1  # skipped while Redis is marked down

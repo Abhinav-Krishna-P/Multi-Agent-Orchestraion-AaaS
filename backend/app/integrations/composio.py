@@ -270,13 +270,43 @@ def _asks_approval(app: App, action: dict) -> BaseTool:
     )
 
 
-def _runs_locked(app: App, action: dict, integration_id, account_id: str, user_id: str, locked: dict) -> BaseTool:
-    """An action that changes something, run straight away in an automation: nobody is there to
-    approve it. Locked arguments are set to the user's values and every other destination is
-    removed, so the model cannot send anything anywhere the user did not say."""
+_WORD = re.compile(r"[\w@-]")  # \w is letters, digits and _
+
+
+def named_in(value, text: str) -> bool:
+    """Is `value` in `text` as a whole token (case-insensitive)? What touches it must not be a letter,
+    digit, @, _, - or a dot joined to a letter/digit, so "x.com" is not found in "bob@x.com"."""
+    if not isinstance(value, str) or not value:
+        return False
+    text, value, start = text.lower(), value.lower(), 0
+    while (at := text.find(value, start)) != -1:
+        end = at + len(value)
+        before, after = text[at - 1] if at else "", text[end:end + 2]
+        joined_before = before == "." and value[0].isalnum()
+        joined_after = after[:1] == "." and after[1:].isalnum()
+        if not (before and _WORD.match(before)) and not joined_before and not (after and _WORD.match(after[0])) and not joined_after:
+            return True
+        start = at + 1
+    return False
+
+
+def _runs_locked(app: App, action: dict, integration_id, account_id: str, user_id: str, locked: dict, allowed_in: str | None = None) -> BaseTool:
+    """An action that changes something, run straight away with nobody there to approve it.
+    Locked arguments are set to the user's values and every other destination is removed, so the
+    model cannot send anything anywhere the user did not say. With `allowed_in` (an API call) a
+    destination is also kept when the caller's own message names it, item by item for a list."""
+
+    def vetted(name, value):
+        if name in locked or not DESTINATION_ARG.search(name):
+            return value
+        if allowed_in is None:
+            return None
+        if isinstance(value, list):
+            return [item for item in value if named_in(item, allowed_in)] or None
+        return value if named_in(value, allowed_in) else None
 
     async def run(**arguments) -> tuple[str, dict]:
-        sent = {name: value for name, value in arguments.items() if name in locked or not DESTINATION_ARG.search(name)} | locked
+        sent = {name: kept for name, value in arguments.items() if (kept := vetted(name, value)) is not None} | locked
         overridden = [name for name, value in arguments.items() if sent.get(name) != value]
         text = await _run_for_model(app, action["slug"], integration_id, account_id, user_id, sent)
         return text, {"overridden": overridden}
@@ -331,11 +361,13 @@ async def mark_expired(*conditions) -> list[AgentIntegration]:
 
 
 async def build_tools(
-    integrations: Sequence[AgentIntegration], user_id: str, *, locked: dict[str, dict] | None = None
+    integrations: Sequence[AgentIntegration], user_id: str, *, locked: dict[str, dict] | None = None,
+    allowed_in: str | None = None, writes: bool = True,
 ) -> tuple[list[BaseTool], dict[str, str]]:
     """The switched-on actions of the agent's working connections, as tools, with the words
     shown in chat while each one runs. With `locked` (an automation), writes run directly with
-    those argument values fixed; without it, they ask for approval."""
+    those argument values fixed (and destinations the `allowed_in` message names kept); without it,
+    they ask for approval. `writes=False` leaves the write actions out."""
     rows = [row for row in integrations if row.app in APPS and row.status == "active" and row.actions]
 
     async def offered_by(row) -> dict:
@@ -366,11 +398,13 @@ async def build_tools(
             if slug not in offered:  # an action Composio has since withdrawn is quietly dropped
                 continue
             if offered[slug]["kind"] == "write":
+                if not writes:
+                    continue
                 if locked is None:
                     tools.append(_asks_approval(app, offered[slug]))
                     labels[slug.lower()] = "Asking for your approval…"
                 else:
-                    tools.append(_runs_locked(app, offered[slug], row.id, row.connected_account_id, user_id, locked.get(slug.lower(), {})))
+                    tools.append(_runs_locked(app, offered[slug], row.id, row.connected_account_id, user_id, locked.get(slug.lower(), {}), allowed_in))
                     labels[slug.lower()] = f"Using {app.name}…"
             else:
                 tools.append(_as_tool(app, offered[slug], row.id, row.connected_account_id, user_id))

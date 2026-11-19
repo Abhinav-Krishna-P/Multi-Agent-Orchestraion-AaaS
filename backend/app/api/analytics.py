@@ -30,8 +30,8 @@ CACHE_SECONDS = 60
 # same days (not "this hour, seven days ago").
 _WHERE = "properties.agent_id = {agent_id} and distinct_id = {user_id} and timestamp >= toDateTime({start}, 'UTC')"
 _FAILED = "toString(properties.success) != 'true'"
-# The Chat tab leaves out automation runs' tool calls. Chat's own carry no source: a bare != would drop them.
-_CHAT_TOOL = "event = 'tool_called' and ifNull(toString(properties.source), '') != 'automation'"
+# The Chat tab leaves out automation runs' and API calls' tool calls. Chat's own carry no source: a bare != would drop them.
+_CHAT_TOOL = "event = 'tool_called' and ifNull(toString(properties.source), '') not in ('automation', 'api')"
 
 TOTALS = f"""
 select
@@ -184,6 +184,44 @@ def _shape_automations(totals, days, table, span, zone, known: dict, active_now:
     }
 
 
+API_TOTALS = f"""
+select
+    countIf(event = 'api_call'),
+    countIf(event = 'api_call' and toString(properties.success) = 'true'),
+    avgIf(toFloat(properties.duration_ms), event = 'api_call'),
+    countIf(event = 'tool_called' and properties.source = 'api')
+from events
+where {_WHERE}
+"""
+
+API_DAYS = f"""
+select toDate(toTimeZone(timestamp, {{tz}})) as day,
+    countIf(event = 'api_call' and toString(properties.success) = 'true'),
+    countIf(event = 'api_call' and {_FAILED})
+from events
+where {_WHERE}
+group by day
+order by day
+"""
+
+
+def _shape_api(totals, days, span, zone) -> dict:
+    calls, succeeded, avg_ms, tool_calls = (_number(v) for v in (totals or [[0] * 4])[0])
+    by_day = {str(day)[:10]: (int(_number(ok)), int(_number(bad))) for day, ok, bad in days}
+    today = dt.datetime.now(zone).date()
+    return {
+        "totals": {
+            "calls": int(calls), "succeeded": int(succeeded),
+            "success_rate": round(succeeded / calls, 3) if calls else None,
+            "avg_call_ms": round(avg_ms) if calls else None, "tool_calls": int(tool_calls),
+        },
+        "days": [
+            {"date": day, "succeeded": by_day.get(day, (0, 0))[0], "failed": by_day.get(day, (0, 0))[1]}
+            for day in ((today - dt.timedelta(days=offset)).isoformat() for offset in range(span - 1, -1, -1))
+        ],
+    }
+
+
 def _zone(tz: str) -> ZoneInfo:
     try:
         return ZoneInfo(tz)
@@ -242,3 +280,19 @@ async def automation_analytics(
     active_now = sum(row.status == "active" for row in rows)
     shaped = _shape_automations(totals, days, table, RANGES[range_], zone, known, active_now)
     return await _remember(key, {"enabled": True, "range": range_, **shaped})
+
+
+@router.get("/agents/{agent_id}/analytics/api")
+async def api_analytics(
+    agent: Agent = Depends(get_owned_agent),
+    range_: Literal["7d", "30d", "90d"] = Query("7d", alias="range"),
+    tz: str = Query("UTC", max_length=64),
+) -> dict:
+    zone = _zone(tz)
+    if not posthog.queries_enabled():
+        return {"enabled": False}
+    key = f"analytics:{agent.id}:api:{range_}:{tz}"
+    if (remembered := await cache.get_json(key)) is not None:
+        return remembered
+    totals, days = await _ask(agent, range_, tz, zone, (API_TOTALS, API_DAYS))
+    return await _remember(key, {"enabled": True, "range": range_, **_shape_api(totals, days, RANGES[range_], zone)})

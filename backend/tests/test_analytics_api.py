@@ -75,7 +75,7 @@ async def test_values_are_placeholders_never_pasted_in(client, user_a, queries):
 async def test_the_chat_tab_leaves_out_automation_tool_calls(client, user_a, queries):
     agent = await create_agent(client, user_a)
     await client.get(f"/agents/{agent['id']}/analytics", headers=user_a)
-    chat_only = "ifNull(toString(properties.source), '') != 'automation'"
+    chat_only = "ifNull(toString(properties.source), '') not in ('automation', 'api')"
     for sql, _ in queries:
         # Every tool_called count, average and the tools table, never a bare != (a missing source is chat).
         assert sql.count("event = 'tool_called'") == sql.count(f"event = 'tool_called' and {chat_only}") > 0, sql
@@ -311,3 +311,52 @@ async def test_odd_time_zones_are_refused_cleanly(client, user_a, queries, zone)
     agent = await create_agent(client, user_a)
     r = await client.get(f"/agents/{agent['id']}/analytics", params={"tz": zone}, headers=user_a)
     assert r.status_code == 422
+
+
+@pytest.fixture
+def queries_api(monkeypatch, queries):
+    """The API-tab queries: days by what they group, otherwise the totals row."""
+    from app.analytics import posthog
+
+    today = dt.datetime.now(dt.UTC).date().isoformat()
+
+    async def query(sql, values):
+        queries.append((sql, values))
+        return [[today, 4, 1]] if "group by day" in sql else [[10, 8, 1500.4, 14]]
+
+    monkeypatch.setattr(posthog, "query", query)
+
+
+async def test_api_tab_totals_and_days(client, user_a, queries_api):
+    agent = await create_agent(client, user_a)
+    body = (await client.get(f"/agents/{agent['id']}/analytics/api?range=7d", headers=user_a)).json()
+    today = dt.datetime.now(dt.UTC).date().isoformat()
+    assert body["enabled"] is True and body["range"] == "7d"
+    assert body["totals"] == {"calls": 10, "succeeded": 8, "success_rate": 0.8, "avg_call_ms": 1500, "tool_calls": 14}
+    assert len(body["days"]) == 7 and body["days"][-1] == {"date": today, "succeeded": 4, "failed": 1}
+    assert body["days"][-2] == {"date": body["days"][-2]["date"], "succeeded": 0, "failed": 0}
+
+
+async def test_api_tab_with_no_calls(client, user_a, monkeypatch):
+    from app.analytics import posthog
+
+    async def nothing(sql, values):
+        return [[0, 0, float("nan"), 0]] if "group by" not in sql else []
+
+    monkeypatch.setattr(posthog, "query", nothing)
+    monkeypatch.setattr(posthog, "queries_enabled", lambda: True)
+    agent = await create_agent(client, user_a)
+    body = (await client.get(f"/agents/{agent['id']}/analytics/api", headers=user_a)).json()
+    assert body["totals"]["success_rate"] is None and body["totals"]["avg_call_ms"] is None
+
+
+async def test_api_tab_is_cached(client, user_a, queries_api, stored):
+    agent = await create_agent(client, user_a)
+    await client.get(f"/agents/{agent['id']}/analytics/api?range=30d", headers=user_a)
+    assert stored == [(f"analytics:{agent['id']}:api:30d:UTC", 60)]
+
+
+async def test_chat_tab_leaves_out_api_tool_calls(client, user_a, queries):
+    agent = await create_agent(client, user_a)
+    await client.get(f"/agents/{agent['id']}/analytics", headers=user_a)
+    assert queries and all("not in ('automation', 'api')" in sql for sql, _ in queries)

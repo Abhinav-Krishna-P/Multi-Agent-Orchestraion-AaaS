@@ -59,6 +59,7 @@ class Agent(Base):
     __table_args__ = (
         CheckConstraint("status in ('draft', 'live', 'stopped')", name="ck_agents_status"),
         CheckConstraint("search_mode in ('semantic', 'keyword', 'hybrid')", name="ck_agents_search_mode"),
+        CheckConstraint("api_calls_per_minute between 1 and 600", name="ck_agents_api_calls_per_minute"),
         Index("ix_agents_user_id", "user_id"),
     )
 
@@ -77,6 +78,9 @@ class Agent(Base):
     # True: answer only from the documents. False: documents first, then general knowledge.
     kb_strict: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     status: Mapped[str] = mapped_column(Text, nullable=False, default="draft", server_default="draft")
+    # Agent API: may a key's calls run write actions, and how many calls a minute are allowed.
+    api_actions: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    api_calls_per_minute: Mapped[int] = mapped_column(Integer, nullable=False, default=60, server_default="60")
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
@@ -268,3 +272,40 @@ class AutomationRun(Base):
     error: Mapped[str | None] = mapped_column(Text)
     event: Mapped[dict | None] = mapped_column(JSONB)
     event_key: Mapped[str | None] = mapped_column(Text)
+
+
+class AgentApiKey(Base):
+    """A secret that lets one agent be called from outside. Only the SHA-256 of it is kept."""
+
+    __tablename__ = "agent_api_keys"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    agent_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    key_hash: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    hint: Mapped[str] = mapped_column(Text, nullable=False)  # the key's last 4 characters
+    created_at: Mapped[datetime] = _created_at()
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ApiCall(Base):
+    """One call made through the Agent API, kept for the owner's call log."""
+
+    __tablename__ = "api_calls"
+    __table_args__ = (Index("ix_api_calls_agent_id_created_at", "agent_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    key_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("agent_api_keys.id", ondelete="SET NULL"))
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    reply: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    tools_used: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
+    sources: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
+    outcome: Mapped[str] = mapped_column(Text, nullable=False)  # "ok" or the error code
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = _created_at()

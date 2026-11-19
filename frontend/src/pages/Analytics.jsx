@@ -2,12 +2,13 @@ import { BarChart3, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { AgentSelect } from '@/components/AgentSelect'
+import { ApiReport } from '@/components/analytics/ApiAnalytics'
 import { AutomationReport } from '@/components/analytics/AutomationAnalytics'
 import { ActivitySection, Tile, ms, number } from '@/components/analytics/parts'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs } from '@/components/ui/tabs'
-import { useAgents, useAnalytics, useAutomationAnalytics } from '@/lib/queries'
+import { useAgents, useAnalytics, useApiAnalytics, useAutomationAnalytics } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 
 const RANGES = [
@@ -22,6 +23,7 @@ const SERIES = [
 const TABS = [
   { value: 'chat', label: 'Chat' },
   { value: 'automations', label: 'Automations' },
+  { value: 'api', label: 'API' },
 ]
 const PAGE_SIZE = 10
 const TYPE_NAMES = { builtin: 'Built-in', api: 'Outside service', knowledge_base: 'Knowledge base', composio: 'Connected app' }
@@ -122,10 +124,11 @@ export default function Analytics() {
   const agents = useAgents()
   const [range, setRange] = useState('7d')
   const [params, setParams] = useSearchParams()
-  const tab = params.get('tab') === 'automations' ? 'automations' : 'chat'
+  const tab = ['automations', 'api'].includes(params.get('tab')) ? params.get('tab') : 'chat'
   const chat = useAnalytics(agentId, range, tab === 'chat')
   const automations = useAutomationAnalytics(agentId, range, tab === 'automations')
-  const analytics = tab === 'chat' ? chat : automations
+  const api = useApiAnalytics(agentId, range, tab === 'api')
+  const analytics = { chat, automations, api }[tab]
   const selectTab = (value) => setParams(value === 'chat' ? {} : { tab: value }, { replace: true })
   const list = agents.data ?? []
 
@@ -184,7 +187,11 @@ export default function Analytics() {
     )
   } else if (analytics.data) {
     // Keyed: another agent or period starts the tools table on its first page.
-    body = tab === 'chat' ? <Report key={`${agentId}:${range}`} data={analytics.data} /> : <AutomationReport data={analytics.data} />
+    body = {
+      chat: <Report key={`${agentId}:${range}`} data={analytics.data} />,
+      automations: <AutomationReport data={analytics.data} />,
+      api: <ApiReport data={analytics.data} />,
+    }[tab]
   }
 
   return (

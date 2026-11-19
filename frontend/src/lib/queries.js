@@ -327,3 +327,14 @@ export function useAutomationAnalytics(agentId, range, enabled = true) {
     enabled: Boolean(agentId) && enabled,
   })
 }
+
+export function useApiAnalytics(agentId, range, enabled = true) {
+  return useQuery({
+    queryKey: ['analytics', agentId, range, 'api'],
+    queryFn: () => {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+      return api(`/agents/${agentId}/analytics/api?range=${range}&tz=${encodeURIComponent(tz)}`)
+    },
+    enabled: Boolean(agentId) && enabled,
+  })
+}
