@@ -8,6 +8,7 @@ import { queryClient } from '@/lib/queryClient'
 import AgentsList from '@/pages/AgentsList'
 import AgentWizard from '@/pages/AgentWizard'
 import Analytics from '@/pages/Analytics'
+import Api from '@/pages/Api'
 import Automations from '@/pages/Automations'
 import Chat from '@/pages/Chat'
 import Connected from '@/pages/Connected'
@@ -52,6 +53,7 @@ export default function App() {
                 <Route path="chat/:agentId/:sessionId?" element={<Chat />} />
                 <Route path="automations/:agentId?" element={<Automations />} />
                 <Route path="analytics/:agentId?" element={<Analytics />} />
+                <Route path="api/:agentId?" element={<Api />} />
               </Route>
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />

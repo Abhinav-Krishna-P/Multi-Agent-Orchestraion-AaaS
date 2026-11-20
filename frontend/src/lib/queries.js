@@ -1,5 +1,5 @@
 // Server data hooks shared by several screens. Each query has one key, listed in `keys`.
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './api'
 
 export const keys = {
@@ -17,6 +17,7 @@ export const keys = {
   automations: (agentId) => ['automations', agentId],
   automationRuns: (id) => ['automation-runs', id],
   automationConversation: (agentId) => ['automation-conversation', agentId],
+  agentApi: (agentId) => ['agent-api', agentId],
 }
 
 // --- LLM keys and models --------------------------------------------------------------
@@ -336,5 +337,53 @@ export function useApiAnalytics(agentId, range, enabled = true) {
       return api(`/agents/${agentId}/analytics/api?range=${range}&tz=${encodeURIComponent(tz)}`)
     },
     enabled: Boolean(agentId) && enabled,
+  })
+}
+
+// --- Agent API (keys and settings) ----------------------------------------------------------
+
+export function useAgentApi(agentId) {
+  return useQuery({
+    queryKey: keys.agentApi(agentId),
+    queryFn: () => api(`/agents/${agentId}/api`),
+    enabled: Boolean(agentId),
+  })
+}
+
+/** The new key is in the response only; it is returned to the caller and never cached. */
+export function useCreateApiKey(agentId) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (name) => api(`/agents/${agentId}/api/keys`, { method: 'POST', body: { name } }),
+    gcTime: 0, // the new key is not kept in the cache after the dialog closes
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.agentApi(agentId) }),
+  })
+}
+
+/** The call log, newest first; each page starts before the last row's time. */
+export function useApiCalls(agentId) {
+  return useInfiniteQuery({
+    queryKey: [...keys.agentApi(agentId), 'calls'],
+    queryFn: ({ pageParam }) =>
+      api(`/agents/${agentId}/api/calls${pageParam ? `?before=${encodeURIComponent(pageParam)}` : ''}`),
+    initialPageParam: null,
+    getNextPageParam: (last) => (last.more ? last.calls.at(-1).created_at : undefined),
+    enabled: Boolean(agentId),
+  })
+}
+
+export function useRevokeApiKey(agentId) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (keyId) => api(`/agents/${agentId}/api/keys/${keyId}`, { method: 'DELETE' }),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.agentApi(agentId) }),
+  })
+}
+
+export function useUpdateApiSettings(agentId) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (body) => api(`/agents/${agentId}/api`, { method: 'PATCH', body }),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.agentApi(agentId) }),
   })
 }

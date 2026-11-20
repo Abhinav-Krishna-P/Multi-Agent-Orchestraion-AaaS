@@ -270,7 +270,7 @@ def _asks_approval(app: App, action: dict) -> BaseTool:
     )
 
 
-_WORD = re.compile(r"[\w@-]")  # \w is letters, digits and _
+_WORD = re.compile(r"[\w@+'%=-]")  # \w is letters, digits and _; the rest can join an email local part
 
 
 def named_in(value, text: str) -> bool:

@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent import unattended
 from app.agent.llm import ModelFactory, get_model_factory, get_user_api_key
-from app.agent.runner import MODEL_ERROR_MESSAGE
 from app.agent.toolset import build_toolset
 from app.analytics import posthog
 from app.automations.run import RUN_SECONDS
@@ -104,7 +103,7 @@ async def run(body: RunIn, who: tuple[AgentApiKey, Agent] = Depends(caller), db:
         logger.warning("An API call failed: %s", type(exc).__name__)
         outcome = "agent_failed"
     duration = int((time.monotonic() - started) * 1000)
-    tools = [{"name": u["name"], "ok": u["ok"], "result": None, **({"overridden": u["overridden"]} if "overridden" in u else {})}
+    tools = [{"name": u["name"], "ok": u["ok"], "result": u.get("card"), **({"overridden": u["overridden"]} if "overridden" in u else {})}
              for u in used.values()]
     row = ApiCall(agent_id=agent.id, user_id=agent.user_id, key_id=key.id, message=body.message, reply=reply["text"],
                   tools_used=tools, sources=sources, outcome=outcome, duration_ms=duration)
@@ -112,6 +111,6 @@ async def run(body: RunIn, who: tuple[AgentApiKey, Agent] = Depends(caller), db:
     await db.commit()
     posthog.capture("api_call", agent.user_id, agent_id=agent.id, success=outcome == "ok", duration_ms=duration)
     if outcome != "ok":
-        raise ApiError(502, "agent_failed", MODEL_ERROR_MESSAGE)
+        raise ApiError(502, "agent_failed", "The agent couldn't finish this call. Try again in a moment.")
     return {"id": row.id, "agent_id": agent.id, "reply": reply["text"], "sources": sources, "tools_used": tools,
             "duration_ms": duration}

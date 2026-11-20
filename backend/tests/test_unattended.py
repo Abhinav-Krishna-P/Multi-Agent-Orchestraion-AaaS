@@ -23,6 +23,8 @@ def test_named_in_matches_whole_tokens_only():
     assert named_in("bob@x.com", "send to Bob@X.com, thanks")
     assert not named_in("bob@x.co", "send to bob@x.com")
     assert not named_in("x.com", "send to bob@x.com")
+    assert not named_in("bob@x.com", "alice+bob@x.com")
+    assert not named_in("bob@x.com", "o'bob@x.com")
     assert named_in("#general", "post in #general")
     assert not named_in("", "anything")
 

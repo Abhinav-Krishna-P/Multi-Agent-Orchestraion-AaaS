@@ -16,7 +16,7 @@ from tests.test_approvals import executed, switch_on
 from tests.test_cache import RaisingRedis
 from tests.test_chat import live_chat  # noqa: F401  (fixture)
 from tests.test_integrations import composio  # noqa: F401  (fixture)
-from tests.test_tool_loop import call
+from tests.test_tool_loop import call, enable
 
 
 @pytest.fixture
@@ -92,7 +92,10 @@ async def test_stopped_agent_or_missing_llm_key_is_409(client, user_a, live_chat
     assert r.status_code == 409 and r.json()["detail"]["code"] == "agent_not_live"
 
 
-async def test_rate_limit(client, user_a, live_chat, use_api_model, db):  # noqa: F811
+async def test_rate_limit(client, user_a, live_chat, use_api_model, db, monkeypatch):  # noqa: F811
+    from app.api import public
+
+    monkeypatch.setattr(public.time, "time", lambda: 1_000_030.0)  # all calls in one minute window
     agent, _ = live_chat
     key = (await make_key(client, user_a, agent["id"]))["key"]
     await client.patch(f"/agents/{agent['id']}/api", json={"calls_per_minute": 2}, headers=user_a)
@@ -147,6 +150,7 @@ async def test_a_failed_run_is_502_and_logged(client, user_a, live_chat, use_api
     r = await run(client, key)
     assert r.status_code == 502 and r.json()["detail"]["code"] == "agent_failed"
     assert "sk-leaky" not in r.text and "exploded" not in r.text
+    assert r.json()["detail"]["message"] == "The agent couldn't finish this call. Try again in a moment."
     assert [c.outcome for c in await calls(db)] == ["agent_failed"]
     assert named(events, "api_call")[-1]["success"] is False
 
@@ -194,3 +198,14 @@ async def test_no_transaction_is_open_while_the_agent_runs(client, user_a, live_
     monkeypatch.setattr(public.unattended, "play", play)
     assert (await run(client, key)).status_code == 200
     assert open_during_run == [False]
+
+
+async def test_tools_used_carries_the_card(client, user_a, live_chat, use_api_model, db):  # noqa: F811
+    agent, _ = live_chat
+    await enable(client, user_a, agent, "calculator")
+    key = (await make_key(client, user_a, agent["id"]))["key"]
+    use_api_model(scripted(call("calculator", expression="6*7"), ["42."]))
+    r = await run(client, key, "What is 6*7?")
+    card = {"kind": "calculation", "service": "Calculator", "expression": "6*7", "result": "42"}
+    assert r.json()["tools_used"] == [{"name": "calculator", "ok": True, "result": card}]
+    assert (await calls(db))[-1].tools_used[0]["result"] == card

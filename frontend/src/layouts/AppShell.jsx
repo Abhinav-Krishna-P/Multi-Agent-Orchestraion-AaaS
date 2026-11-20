@@ -19,6 +19,7 @@ const NAV_ITEMS = [
   { to: '/app/chat', label: 'Chat with your agent', icon: MessageSquare },
   { to: '/app/automations', label: 'Automations', icon: Workflow },
   { to: '/app/analytics', label: 'Analytics', icon: BarChart3 },
+  { to: '/app/api', label: 'API', icon: KeyRound },
 ]
 
 function Brand() {
