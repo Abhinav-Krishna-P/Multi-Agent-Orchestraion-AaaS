@@ -80,23 +80,79 @@ async def test_deleting_the_agent_removes_keys_and_calls(client, user_a, db):
         assert await db.scalar(select(func.count()).select_from(model).where(model.agent_id == aid)) == 0
 
 
-async def test_call_log_pages_newest_first(client, user_a, db):
+async def seed_calls(client, user_a, db, stamps):
+    """Insert one call per (created_at, outcome) stamp for a fresh agent with a revoked key 'Prod'."""
     agent = await live_agent(client, user_a)
     key = await make_key(client, user_a, agent["id"], "Prod")
     aid, kid = uuid.UUID(agent["id"]), uuid.UUID(key["id"])
     me = await db.scalar(select(AgentApiKey.user_id).where(AgentApiKey.id == kid))
-    start = datetime.now(UTC) - timedelta(hours=1)
-    for i in range(25):
-        db.add(ApiCall(agent_id=aid, user_id=me, key_id=kid, message=f"m{i}", reply="r", outcome="ok",
-                       duration_ms=i, created_at=start + timedelta(seconds=i)))
+    for i, (at, outcome) in enumerate(stamps):
+        db.add(ApiCall(agent_id=aid, user_id=me, key_id=kid, message=f"m{i}", reply="r", outcome=outcome,
+                       duration_ms=i, created_at=at))
     await db.commit()
     await client.delete(f"/agents/{agent['id']}/api/keys/{key['id']}", headers=user_a)
+    return agent
+
+
+def at(day, hour=12, minute=0):
+    return datetime(2026, 11, day, hour, minute, tzinfo=UTC)
+
+
+async def test_call_days_count_failed_and_order(client, user_a, db):
+    stamps = [(at(19, 10, i), "ok") for i in range(3)] + [(at(20, 10, i), "ok") for i in range(4)]
+    stamps.append((at(20, 11), "agent_failed"))
+    agent = await seed_calls(client, user_a, db, stamps)
+    r = await client.get(f"/agents/{agent['id']}/api/calls/days", headers=user_a)
+    assert r.json() == {"days": [{"date": "2026-11-20", "calls": 5, "failed": 1},
+                                 {"date": "2026-11-19", "calls": 3, "failed": 0}]}
+
+
+async def test_call_days_use_the_given_zone(client, user_a, db):
+    agent = await seed_calls(client, user_a, db, [(at(20, 20), "ok")])  # 01:30 on the 21st in Kolkata
     url = f"/agents/{agent['id']}/api/calls"
-    page = (await client.get(url, headers=user_a)).json()
-    assert [c["message"] for c in page["calls"]] == [f"m{i}" for i in range(24, 4, -1)] and page["more"] is True
-    assert page["calls"][0]["key_name"] == "Prod"
-    rest = (await client.get(url, params={"before": page["calls"][-1]["created_at"]}, headers=user_a)).json()
-    assert [c["message"] for c in rest["calls"]] == [f"m{i}" for i in range(4, -1, -1)] and rest["more"] is False
+    days = (await client.get(f"{url}/days", params={"tz": "Asia/Kolkata"}, headers=user_a)).json()["days"]
+    assert [d["date"] for d in days] == ["2026-11-21"]
+    page = (await client.get(url, params={"day": "2026-11-21", "tz": "Asia/Kolkata"}, headers=user_a)).json()
+    assert page["total"] == 1
+    page = (await client.get(url, params={"day": "2026-11-21"}, headers=user_a)).json()
+    assert page["total"] == 0
+
+
+async def test_call_page_newest_first_and_counts(client, user_a, db):
+    stamps = [(at(20, 8, i), "ok") for i in range(13)] + [(at(19), "ok")]
+    agent = await seed_calls(client, user_a, db, stamps)
+    url, day = f"/agents/{agent['id']}/api/calls", "2026-11-20"
+    one = (await client.get(url, params={"day": day}, headers=user_a)).json()
+    assert [c["message"] for c in one["calls"]] == [f"m{i}" for i in range(12, 2, -1)]
+    assert (one["page"], one["pages"], one["total"]) == (1, 2, 13)
+    assert one["calls"][0]["key_name"] == "Prod"
+    two = (await client.get(url, params={"day": day, "page": 2}, headers=user_a)).json()
+    assert [c["message"] for c in two["calls"]] == ["m2", "m1", "m0"]
+    past = (await client.get(url, params={"day": day, "page": 9}, headers=user_a)).json()
+    assert (past["calls"], past["pages"], past["total"]) == ([], 2, 13)
+
+
+async def test_recent_calls_are_the_five_newest_across_days(client, user_a, db):
+    stamps = [(at(19, 9, i), "ok") for i in range(3)] + [(at(20, 9, i), "ok") for i in range(3)]
+    agent = await seed_calls(client, user_a, db, stamps)
+    url = f"/agents/{agent['id']}/api/calls/recent"
+    calls = (await client.get(url, headers=user_a)).json()["calls"]
+    assert [c["message"] for c in calls] == ["m5", "m4", "m3", "m2", "m1"] and calls[0]["key_name"] == "Prod"
+    small = await seed_calls(client, user_a, db, [(at(20), "ok")])
+    assert len((await client.get(f"/agents/{small['id']}/api/calls/recent", headers=user_a)).json()["calls"]) == 1
+
+
+async def test_call_log_rejects_bad_input_and_strangers(client, user_a, user_b, db):
+    agent = await seed_calls(client, user_a, db, [(at(20), "ok")])
+    url = f"/agents/{agent['id']}/api/calls"
+    for params in ({"tz": "Nope/Zone"}, {"day": "2026-11-20", "tz": "Nope/Zone"}):
+        assert (await client.get(f"{url}/days" if "day" not in params else url, params=params, headers=user_a)).status_code == 422
+    assert (await client.get(url, headers=user_a)).status_code == 422
+    assert (await client.get(url, params={"day": "soon"}, headers=user_a)).status_code == 422
+    assert (await client.get(url, params={"day": "2026-11-20", "page": 0}, headers=user_a)).status_code == 422
+    assert (await client.get(f"{url}/days", headers=user_b)).status_code == 404
+    assert (await client.get(f"{url}/recent", headers=user_b)).status_code == 404
+    assert (await client.get(url, params={"day": "2026-11-20"}, headers=user_b)).status_code == 404
 
 
 async def test_no_key_in_logs(client, user_a, caplog):

@@ -1,5 +1,5 @@
 // Server data hooks shared by several screens. Each query has one key, listed in `keys`.
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './api'
 
 export const keys = {
@@ -360,15 +360,31 @@ export function useCreateApiKey(agentId) {
   })
 }
 
-/** The call log, newest first; each page starts before the last row's time. */
-export function useApiCalls(agentId) {
-  return useInfiniteQuery({
-    queryKey: [...keys.agentApi(agentId), 'calls'],
-    queryFn: ({ pageParam }) =>
-      api(`/agents/${agentId}/api/calls${pageParam ? `?before=${encodeURIComponent(pageParam)}` : ''}`),
-    initialPageParam: null,
-    getNextPageParam: (last) => (last.more ? last.calls.at(-1).created_at : undefined),
+// Days are counted in the viewer's own time zone.
+const zone = () => encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')
+
+export function useApiRecentCalls(agentId) {
+  return useQuery({
+    queryKey: [...keys.agentApi(agentId), 'calls', 'recent'],
+    queryFn: () => api(`/agents/${agentId}/api/calls/recent`),
     enabled: Boolean(agentId),
+  })
+}
+
+export function useApiCallDays(agentId) {
+  return useQuery({
+    queryKey: [...keys.agentApi(agentId), 'calls', 'days'],
+    queryFn: () => api(`/agents/${agentId}/api/calls/days?tz=${zone()}`),
+    enabled: Boolean(agentId),
+  })
+}
+
+export function useApiCallsPage(agentId, day, page) {
+  return useQuery({
+    queryKey: [...keys.agentApi(agentId), 'calls', 'day', day, page],
+    queryFn: () => api(`/agents/${agentId}/api/calls?day=${day}&tz=${zone()}&page=${page}`),
+    placeholderData: keepPreviousData,
+    enabled: Boolean(agentId && day),
   })
 }
 

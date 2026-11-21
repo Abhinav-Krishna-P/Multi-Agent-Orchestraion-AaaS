@@ -16,7 +16,7 @@ function Outcome({ approval }) {
     )
   if (status === 'approved')
     return (
-      <p className="flex items-center gap-1.5 text-sm text-green-700">
+      <p className="flex items-center gap-1.5 text-sm text-green-400">
         <Check className="size-4" aria-hidden="true" /> Automation is live
       </p>
     )
@@ -65,7 +65,7 @@ export function ProposalCard({ approval, active, disabled, onDecide }) {
           {!sameWords(approval.trigger_text, summary) && <p className="text-xs text-muted-foreground">{approval.trigger_text}</p>}
         </div>
         {pending && (
-          <span className="flex items-center gap-1 text-xs font-medium text-amber-700">
+          <span className="flex items-center gap-1 text-xs font-medium text-amber-400">
             <ShieldCheck className="size-3.5" aria-hidden="true" /> Needs your approval
           </span>
         )}

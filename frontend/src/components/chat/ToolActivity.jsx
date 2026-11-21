@@ -10,7 +10,7 @@ export function ToolActivity({ tools }) {
           {tool.ok === null || tool.ok === undefined ? (
             <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
           ) : tool.ok ? (
-            <Check className="size-3.5 text-green-700" aria-hidden="true" />
+            <Check className="size-3.5 text-green-400" aria-hidden="true" />
           ) : (
             <X className="size-3.5 text-destructive" aria-hidden="true" />
           )}

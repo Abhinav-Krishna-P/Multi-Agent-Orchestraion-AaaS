@@ -74,7 +74,7 @@ function Flight({ flight, currency }) {
         <div className="shrink-0 text-right">
           {flight.price != null && <p className="text-sm font-semibold">{money(flight.price, currency)}</p>}
           {flight.emissions_percent != null && (
-            <p className={cn('flex items-center justify-end gap-1 text-[11px]', flight.emissions_percent <= 0 ? 'text-green-700' : 'text-muted-foreground')}>
+            <p className={cn('flex items-center justify-end gap-1 text-[11px]', flight.emissions_percent <= 0 ? 'text-green-400' : 'text-muted-foreground')}>
               <Leaf className="size-3" aria-hidden="true" />
               {flight.emissions_percent > 0 && '+'}
               {flight.emissions_percent}% CO₂
@@ -111,7 +111,7 @@ function Flight({ flight, currency }) {
                     .join(' · ')}
                 </p>
                 {flight.layovers[index] && (
-                  <p className="mt-2 text-amber-700">
+                  <p className="mt-2 text-amber-400">
                     Layover: {[duration(flight.layovers[index].duration), flight.layovers[index].name, flight.layovers[index].overnight && 'overnight'].filter(Boolean).join(' · ')}
                   </p>
                 )}
@@ -313,7 +313,7 @@ export function Quote({ card }) {
             </p>
             <p className="text-3xl leading-tight font-semibold">{price(card.price)}</p>
             {card.change != null && (
-              <p className={cn('flex items-center gap-1 text-sm font-medium', up ? 'text-green-700' : 'text-destructive')}>
+              <p className={cn('flex items-center gap-1 text-sm font-medium', up ? 'text-green-400' : 'text-destructive')}>
                 <Trend className="size-4" aria-hidden="true" />
                 {up && '+'}
                 {number(card.change, { maximumFractionDigits: 2 })}

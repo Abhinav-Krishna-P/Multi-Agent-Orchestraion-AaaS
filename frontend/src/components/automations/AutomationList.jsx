@@ -29,9 +29,9 @@ import { sameWords, triggerSummary } from './triggerSummary'
 
 // Text, colour and icon together, so the status never relies on colour alone.
 const STATUSES = {
-  active: { label: 'Active', icon: CircleCheck, className: 'text-green-700' },
+  active: { label: 'Active', icon: CircleCheck, className: 'text-green-400' },
   paused: { label: 'Off', icon: CirclePause, className: 'text-muted-foreground' },
-  error: { label: 'Needs attention', icon: CircleAlert, className: 'text-amber-700' },
+  error: { label: 'Needs attention', icon: CircleAlert, className: 'text-amber-400' },
 }
 
 function AutomationItem({ automation, agentId, agentLive }) {

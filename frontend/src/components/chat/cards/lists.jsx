@@ -49,7 +49,7 @@ export function Products({ card }) {
                 <Stars rating={item.rating} reviews={item.reviews} />
                 {item.store && <p className="truncate text-xs text-muted-foreground">{item.store}</p>}
                 {item.bought_last_month && <p className="text-[11px] text-muted-foreground">{item.bought_last_month}</p>}
-                {item.delivery?.[0] && <p className="line-clamp-2 text-[11px] text-green-700">{item.delivery.join(' · ')}</p>}
+                {item.delivery?.[0] && <p className="line-clamp-2 text-[11px] text-green-400">{item.delivery.join(' · ')}</p>}
                 {item.offers?.[0] && <p className="line-clamp-2 text-[11px] text-muted-foreground">{item.offers[0]}</p>}
                 {safeUrl(item.link) && <span className="mt-auto pt-1 text-xs font-medium text-primary">View ↗</span>}
               </div>

@@ -92,7 +92,7 @@ export function CopyButton({ text, label = 'Copy' }) {
       }
       className="inline-flex cursor-pointer items-center gap-1 rounded-md border px-2 py-1 text-xs text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50"
     >
-      {copied ? <Check className="size-3.5 text-green-700" aria-hidden="true" /> : <Copy className="size-3.5" aria-hidden="true" />}
+      {copied ? <Check className="size-3.5 text-green-400" aria-hidden="true" /> : <Copy className="size-3.5" aria-hidden="true" />}
       {copied ? 'Copied' : label}
     </button>
   )

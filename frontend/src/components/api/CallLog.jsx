@@ -2,7 +2,8 @@ import { Check, ChevronDown, X } from 'lucide-react'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useApiCalls } from '@/lib/queries'
+import { Badge } from '@/components/ui/badge'
+import { useApiCallDays, useApiCallsPage, useApiRecentCalls } from '@/lib/queries'
 
 const seconds = (ms) => `${(ms / 1000).toFixed(1)} s`
 
@@ -77,37 +78,141 @@ function Row({ call }) {
   )
 }
 
+function Failed({ onRetry, children }) {
+  return (
+    <div className="flex flex-col items-start gap-3 rounded-xl border p-6">
+      <p className="text-sm text-destructive">{children}</p>
+      <Button variant="outline" onClick={onRetry}>
+        Retry
+      </Button>
+    </div>
+  )
+}
+
+function CallList({ calls }) {
+  return (
+    <ul className="flex flex-col divide-y rounded-xl border">
+      {calls.map((call) => (
+        <Row key={call.id} call={call} />
+      ))}
+    </ul>
+  )
+}
+
+// At most 7 buttons: first, last, the current page and its neighbours, with gaps as ellipses.
+function pageItems(page, pages) {
+  const shown = new Set([1, pages, page - 1, page, page + 1])
+  if (page <= 3) [2, 3, 4, 5].forEach((n) => shown.add(n))
+  if (page >= pages - 2) [pages - 1, pages - 2, pages - 3, pages - 4].forEach((n) => shown.add(n))
+  const sorted = [...shown].filter((n) => n >= 1 && n <= pages).sort((a, b) => a - b).slice(0, 7)
+  return sorted.flatMap((n, i) => (i > 0 && n - sorted[i - 1] > 1 ? [`gap${n}`, n] : [n]))
+}
+
+function Pagination({ page, pages, onPage }) {
+  return (
+    <nav aria-label="Pages" className="flex flex-wrap items-center justify-center gap-1 p-2">
+      <Button variant="ghost" size="sm" disabled={page <= 1} onClick={() => onPage(page - 1)}>
+        ‹ Prev
+      </Button>
+      {pageItems(page, pages).map((item) =>
+        typeof item === 'string' ? (
+          <span key={item} className="px-1 text-muted-foreground" aria-hidden="true">
+            …
+          </span>
+        ) : (
+          <Button
+            key={item}
+            size="sm"
+            variant={item === page ? 'secondary' : 'ghost'}
+            aria-current={item === page ? 'page' : undefined}
+            aria-label={`Page ${item}`}
+            onClick={() => onPage(item)}
+          >
+            {item}
+          </Button>
+        ),
+      )}
+      <Button variant="ghost" size="sm" disabled={page >= pages} onClick={() => onPage(page + 1)}>
+        Next ›
+      </Button>
+    </nav>
+  )
+}
+
+function DayCalls({ agentId, day }) {
+  const [page, setPage] = useState(1)
+  const result = useApiCallsPage(agentId, day, page)
+  if (result.isPending) return <Skeleton className="m-3 h-16" role="status" aria-label="Loading calls" />
+  if (result.isError) return <div className="p-3"><Failed onRetry={() => result.refetch()}>This day couldn&apos;t load.</Failed></div>
+  const { calls, pages } = result.data
+  return (
+    <div className="border-t">
+      <CallList calls={calls} />
+      {pages > 1 && <Pagination page={page} pages={pages} onPage={setPage} />}
+    </div>
+  )
+}
+
+const dayLabel = ({ date }) => {
+  const local = (d) => d.toLocaleDateString('en-CA')
+  const now = new Date()
+  if (date === local(now)) return 'Today'
+  if (date === local(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1))) return 'Yesterday'
+  return new Date(`${date}T12:00:00`).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+}
+
+function Day({ agentId, day }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <li>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        className="flex w-full cursor-pointer items-center gap-2 p-3 text-left text-sm outline-none hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:ring-inset"
+      >
+        <ChevronDown className={`size-4 transition-transform ${open ? '' : '-rotate-90'}`} aria-hidden="true" />
+        <span className="font-medium">{dayLabel(day)}</span>
+        <span className="ml-auto flex items-center gap-2">
+          <Badge variant="secondary">{day.calls} {day.calls === 1 ? 'call' : 'calls'}</Badge>
+          {day.failed > 0 && <Badge variant="destructive">{day.failed} failed</Badge>}
+        </span>
+      </button>
+      {open && <DayCalls agentId={agentId} day={day.date} />}
+    </li>
+  )
+}
+
 export function CallLog({ agentId }) {
-  const calls = useApiCalls(agentId)
-  const rows = calls.data?.pages.flatMap((page) => page.calls) ?? []
+  const recent = useApiRecentCalls(agentId)
+  const days = useApiCallDays(agentId)
 
   let body
-  if (calls.isPending) {
+  if (recent.isPending || days.isPending) {
     body = <Skeleton className="h-24" role="status" aria-label="Loading calls" />
-  } else if (calls.isError) {
+  } else if (recent.isError || days.isError) {
     body = (
-      <div className="flex flex-col items-start gap-3 rounded-xl border p-6">
-        <p className="text-sm text-destructive">The calls couldn&apos;t load.</p>
-        <Button variant="outline" onClick={() => calls.refetch()}>
-          Retry
-        </Button>
-      </div>
+      <Failed
+        onRetry={() => {
+          recent.refetch()
+          days.refetch()
+        }}
+      >
+        The calls couldn&apos;t load.
+      </Failed>
     )
-  } else if (rows.length === 0) {
+  } else if (recent.data.calls.length === 0) {
     body = <p className="rounded-xl border border-dashed p-6 text-center text-sm text-muted-foreground">No calls yet.</p>
   } else {
     body = (
       <>
+        <CallList calls={recent.data.calls} />
+        <h3 className="mt-2 text-sm font-medium text-muted-foreground">By day</h3>
         <ul className="flex flex-col divide-y rounded-xl border">
-          {rows.map((call) => (
-            <Row key={call.id} call={call} />
+          {days.data.days.map((day) => (
+            <Day key={day.date} agentId={agentId} day={day} />
           ))}
         </ul>
-        {calls.hasNextPage && (
-          <Button variant="outline" className="self-start" disabled={calls.isFetchingNextPage} onClick={() => calls.fetchNextPage()}>
-            {calls.isFetchingNextPage ? 'Loading…' : 'Load more'}
-          </Button>
-        )}
       </>
     )
   }

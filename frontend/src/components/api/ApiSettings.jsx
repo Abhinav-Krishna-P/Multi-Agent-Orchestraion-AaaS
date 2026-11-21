@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { toast } from 'sonner'
+import { ActionGroups } from '@/components/api/ActionGroups'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
@@ -52,11 +53,7 @@ export function ApiSettings({ agent, settings, actions }) {
             <Label htmlFor="api-actions">Actions through the API</Label>
             <p className="mt-1 text-sm text-muted-foreground">Calls with a key run actions without asking.</p>
             {settings.actions && actions.length > 0 && (
-              <ul className="mt-2 list-disc pl-5 text-sm text-muted-foreground">
-                {actions.map((a) => (
-                  <li key={a}>{a}</li>
-                ))}
-              </ul>
+              <ActionGroups actions={actions} className="mt-3" />
             )}
           </div>
         </div>

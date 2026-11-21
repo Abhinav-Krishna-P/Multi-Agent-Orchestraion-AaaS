@@ -39,7 +39,7 @@ function Outcome({ approval }) {
   const { status, outcome, reason } = approval
   if (status === 'approved' && outcome === 'done')
     return (
-      <p className="flex items-center gap-1.5 text-sm text-green-700">
+      <p className="flex items-center gap-1.5 text-sm text-green-400">
         <Check className="size-4" aria-hidden="true" /> Approved and done
       </p>
     )
@@ -51,7 +51,7 @@ function Outcome({ approval }) {
     )
   if (status === 'approved')
     return (
-      <p className="flex items-start gap-1.5 text-sm text-amber-700">
+      <p className="flex items-start gap-1.5 text-sm text-amber-400">
         <CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
         {outcome === 'unknown' && reason
           ? `Approved, but ${reason.charAt(0).toLowerCase()}${reason.slice(1)}`
@@ -99,7 +99,7 @@ export function ApprovalCard({ approval, active, disabled, onDecide }) {
           <p className="text-xs text-muted-foreground">{approval.app_name}</p>
         </div>
         {pending && (
-          <span className="flex items-center gap-1 text-xs font-medium text-amber-700">
+          <span className="flex items-center gap-1 text-xs font-medium text-amber-400">
             <ShieldCheck className="size-3.5" aria-hidden="true" /> Needs your approval
           </span>
         )}

@@ -163,8 +163,8 @@ function DescribeThread({ agent, sessionId, onStartOver, starting, onViewList })
         />
       )}
       {created && (
-        <div role="status" className="flex flex-wrap items-center justify-between gap-2 border-t bg-green-600/5 px-4 py-2">
-          <p className="flex min-w-0 items-center gap-1.5 text-sm text-green-700">
+        <div role="status" className="flex flex-wrap items-center justify-between gap-2 border-t bg-green-500/10 px-4 py-2">
+          <p className="flex min-w-0 items-center gap-1.5 text-sm text-green-400">
             <CircleCheck className="size-4 shrink-0" aria-hidden="true" />
             <span className="break-words">&ldquo;{created}&rdquo; is live.</span>
           </p>

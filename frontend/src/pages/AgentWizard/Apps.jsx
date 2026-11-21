@@ -51,7 +51,7 @@ function AppCard({ app, busy, onConnect, onRefresh, onToggleAction, onDisconnect
               app.status === 'expired'
                 ? 'flex items-center gap-1 text-xs text-destructive'
                 : app.status === 'active'
-                  ? 'text-xs text-green-700'
+                  ? 'text-xs text-green-400'
                   : 'text-xs text-muted-foreground'
             }
           >

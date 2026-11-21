@@ -1,12 +1,13 @@
 """The owner's side of the Agent API: keys, settings and the call log."""
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.analytics import _zone
 from app.api.deps import get_current_user, get_owned_agent
 from app.core.api_keys import new_key
 from app.core.errors import ApiError, not_found
@@ -16,7 +17,8 @@ from app.integrations import composio
 
 router = APIRouter()
 MAX_KEYS = 10
-CALLS_SHOWN = 20
+CALLS_SHOWN = 10
+RECENT_CALLS = 5
 
 
 class KeyIn(BaseModel):
@@ -115,28 +117,51 @@ async def revoke_key(key_id: uuid.UUID, agent: Agent = Depends(get_owned_agent),
     return Response(status_code=204)
 
 
-@router.get("/agents/{agent_id}/api/calls")
-async def list_calls(
-    before: datetime | None = None, agent: Agent = Depends(get_owned_agent), db: AsyncSession = Depends(get_db)
-) -> dict:
-    query = (
+def _local_day(tz: str):
+    return func.date(func.timezone(tz, ApiCall.created_at))
+
+
+@router.get("/agents/{agent_id}/api/calls/days")
+async def list_call_days(tz: str = "UTC", agent: Agent = Depends(get_owned_agent), db: AsyncSession = Depends(get_db)) -> dict:
+    _zone(tz)
+    day = _local_day(tz)
+    failed = func.count().filter(ApiCall.outcome != "ok")
+    rows = await db.execute(
+        select(day, func.count(), failed).where(ApiCall.agent_id == agent.id).group_by(day).order_by(day.desc()).limit(366)
+    )
+    return {"days": [{"date": d.isoformat(), "calls": n, "failed": f} for d, n, f in rows]}
+
+
+def _call_out(call: ApiCall, key_name: str | None) -> dict:
+    return {
+        "id": call.id, "created_at": call.created_at, "outcome": call.outcome, "duration_ms": call.duration_ms,
+        "message": call.message, "reply": call.reply, "tools_used": call.tools_used, "sources": call.sources,
+        "key_name": key_name,
+    }
+
+
+def _calls_query(*where):
+    return (
         select(ApiCall, AgentApiKey.name)
         .outerjoin(AgentApiKey, AgentApiKey.id == ApiCall.key_id)
-        .where(ApiCall.agent_id == agent.id)
+        .where(*where)
         .order_by(ApiCall.created_at.desc())
-        .limit(CALLS_SHOWN + 1)
     )
-    if before is not None:
-        query = query.where(ApiCall.created_at < before)
-    rows = (await db.execute(query)).all()
-    return {
-        "calls": [
-            {
-                "id": c.id, "created_at": c.created_at, "outcome": c.outcome, "duration_ms": c.duration_ms,
-                "message": c.message, "reply": c.reply, "tools_used": c.tools_used, "sources": c.sources,
-                "key_name": key_name,
-            }
-            for c, key_name in rows[:CALLS_SHOWN]
-        ],
-        "more": len(rows) > CALLS_SHOWN,
-    }
+
+
+@router.get("/agents/{agent_id}/api/calls/recent")
+async def recent_calls(agent: Agent = Depends(get_owned_agent), db: AsyncSession = Depends(get_db)) -> dict:
+    rows = (await db.execute(_calls_query(ApiCall.agent_id == agent.id).limit(RECENT_CALLS))).all()
+    return {"calls": [_call_out(*row) for row in rows]}
+
+
+@router.get("/agents/{agent_id}/api/calls")
+async def list_calls(
+    day: date, tz: str = "UTC", page: int = Query(1, ge=1),
+    agent: Agent = Depends(get_owned_agent), db: AsyncSession = Depends(get_db),
+) -> dict:
+    _zone(tz)
+    on_day = (ApiCall.agent_id == agent.id, _local_day(tz) == day)
+    total = await db.scalar(select(func.count()).select_from(ApiCall).where(*on_day))
+    rows = (await db.execute(_calls_query(*on_day).limit(CALLS_SHOWN).offset((page - 1) * CALLS_SHOWN))).all()
+    return {"calls": [_call_out(*row) for row in rows], "page": page, "pages": -(-total // CALLS_SHOWN), "total": total}

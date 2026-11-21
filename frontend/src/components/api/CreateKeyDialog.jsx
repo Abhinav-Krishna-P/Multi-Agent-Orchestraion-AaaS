@@ -1,6 +1,8 @@
-import { Check, Copy, Loader2 } from 'lucide-react'
+import { Check, ChevronRight, Copy, Loader2 } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
+import { actionSummary } from '@/components/api/actions'
+import { ActionGroups } from '@/components/api/ActionGroups'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -14,6 +16,7 @@ export function CreateKeyDialog({ agent, open, onOpenChange }) {
   const [name, setName] = useState('')
   const [created, setCreated] = useState(null)
   const [copied, setCopied] = useState(false)
+  const [seeActions, setSeeActions] = useState(false)
   const actions = info.data?.actions ?? []
   const actionsOn = info.data?.settings.actions !== false
   const trimmed = name.trim()
@@ -61,10 +64,29 @@ export function CreateKeyDialog({ agent, open, onOpenChange }) {
                 {!actionsOn
                   ? "Actions through the API are off: calls with this key can't send, create or change anything in connected apps."
                   : actions.length > 0
-                  ? `Calls with this key run the agent's actions automatically, without asking: it can ${actions.join(', ')}.`
+                  ? `Calls with this key run the agent's actions automatically, without asking: it can run ${actionSummary(actions)}.`
                   : 'This agent has no actions right now; any you add later run automatically too.'}
               </DialogDescription>
             </DialogHeader>
+            {actionsOn && actions.length > 0 && (
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  aria-expanded={seeActions}
+                  aria-controls="api-key-actions"
+                  onClick={() => setSeeActions((v) => !v)}
+                  className="inline-flex w-fit cursor-pointer items-center gap-1 rounded-sm text-sm font-medium text-primary outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+                >
+                  <ChevronRight className={`size-4 transition-transform ${seeActions ? 'rotate-90' : ''}`} aria-hidden="true" />
+                  {seeActions ? 'Hide actions' : 'See actions'}
+                </button>
+                {seeActions && (
+                  <div id="api-key-actions" className="max-h-60 overflow-y-auto">
+                    <ActionGroups actions={actions} />
+                  </div>
+                )}
+              </div>
+            )}
             <div className="flex flex-col gap-2">
               <Label htmlFor="api-key-name">Name</Label>
               <Input

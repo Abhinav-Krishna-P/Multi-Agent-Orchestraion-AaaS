@@ -369,4 +369,4 @@ curl -sS -X POST "http://localhost:8000/v1/run" \
 
 ## Call log
 
-The API page lists recent calls: time, outcome, duration, message, reply, tools used and sources. Rejected calls (401, 422, 429) are not logged. Calls of a revoked key stay in the log.
+The API page shows the 5 most recent calls, then a per-day list (call and failed counts) that opens to that day's calls, 10 per page. Each call shows time, outcome, duration, message, reply, tools used and sources. Rejected calls (401, 422, 429) are not logged. Calls of a revoked key stay in the log.

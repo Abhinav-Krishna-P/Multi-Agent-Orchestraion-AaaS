@@ -20,7 +20,7 @@ export function RunStatus({ status }) {
     )
   if (status === 'succeeded')
     return (
-      <span className="inline-flex items-center gap-1 text-green-700">
+      <span className="inline-flex items-center gap-1 text-green-400">
         <Check className="size-3.5" aria-hidden="true" /> Succeeded
       </span>
     )

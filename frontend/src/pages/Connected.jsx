@@ -14,7 +14,7 @@ export default function Connected() {
 
   return (
     <main className="flex min-h-svh flex-col items-center justify-center gap-3 p-6 text-center">
-      <CircleCheck className="size-10 text-green-700" aria-hidden="true" />
+      <CircleCheck className="size-10 text-green-400" aria-hidden="true" />
       <h1 className="text-xl font-semibold">Sign-in finished</h1>
       <p className="text-sm text-muted-foreground">You can close this window and go back to your agent.</p>
     </main>

@@ -103,9 +103,9 @@ export default function Deploy({ agent, onBack, goTo }) {
       )}
       {hasBehavior &&
         warnings.map((warning) => (
-          <Alert key={warning} className="border-amber-200 bg-amber-50 text-amber-900">
+          <Alert key={warning} className="border-amber-500/30 bg-amber-500/10 text-amber-200">
             <TriangleAlert aria-hidden="true" />
-            <AlertDescription className="text-amber-900">{warning}</AlertDescription>
+            <AlertDescription className="text-amber-200">{warning}</AlertDescription>
           </Alert>
         ))}
 
