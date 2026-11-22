@@ -32,6 +32,15 @@ os.environ["SUPABASE_JWT_SECRET"] = TEST_JWT_SECRET
 os.environ["PLATFORM_GEMINI_API_KEY"] = ""
 os.environ["SUMMARY_MODEL"] = "test-summary-model"
 os.environ["LANGSMITH_TRACING"] = "false"
+os.environ["CHUNKING_METHOD"] = "recursive"
+os.environ["SCHEDULER_ENABLED"] = "false"
+os.environ["REDIS_URL"] = ""  # tests use the in-process cache, never the owner's Redis
+os.environ["DEFAULT_COUNTRY"] = "in"
+os.environ["DEFAULT_CURRENCY"] = "INR"
+for _name in ("POSTHOG_API_KEY", "POSTHOG_PERSONAL_API_KEY", "POSTHOG_PROJECT_ID"):  # tests never send an event
+    os.environ[_name] = ""
+for _name in ("SERPAPI", "SERPER", "FINNHUB", "COMPOSIO"):  # stand-in keys: tests never reach a real service
+    os.environ[f"{_name}_API_KEY"] = f"test-{_name.lower()}-key"
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -42,6 +51,13 @@ def _migrated_database():
     cfg = Config(str(BACKEND_DIR / "alembic.ini"))
     cfg.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
     command.upgrade(cfg, "head")
+
+
+@pytest.fixture(autouse=True)
+def _empty_cache():
+    from app.core import cache
+
+    cache.reset()
 
 
 @pytest.fixture(autouse=True)
@@ -94,7 +110,7 @@ def make_token(
     *,
     secret: str = TEST_JWT_SECRET,
     audience: str = "authenticated",
-    expires_in: int = 3600,
+    expires_in: int | None = 3600,
 ) -> str:
     now = int(time.time())
     payload = {
@@ -102,9 +118,10 @@ def make_token(
         "email": email,
         "aud": audience,
         "iat": now,
-        "exp": now + expires_in,
         "user_metadata": {"full_name": name, "avatar_url": "https://example.com/a.png"},
     }
+    if expires_in is not None:
+        payload["exp"] = now + expires_in
     return jwt.encode(payload, secret, algorithm="HS256")
 
 

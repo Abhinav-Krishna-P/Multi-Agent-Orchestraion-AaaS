@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     database_url: str
     test_database_url: str | None = None
     db_null_pool: bool = False
+    scheduler_enabled: bool = True
+    redis_url: str = ""  # empty: each process keeps its own in-memory cache
 
     supabase_url: str = ""
     supabase_jwt_secret: str | None = None
@@ -26,6 +28,27 @@ class Settings(BaseSettings):
     summary_model: str = ""
 
     frontend_origin: str = "http://localhost:5173"
+
+    # Knowledge base
+    chroma_url: str = ""
+    chroma_token: str = ""  # sent as the X-Chroma-Token header when set; the proxy in front of Chroma checks it
+    embedding_model: str = "gemini-embedding-2"
+    chunking_method: str = "recursive"  # or "parent_child"; chosen by the LangSmith comparison
+
+    # Platform keys for the outside-service tools. A tool whose key is empty is not offered.
+    serpapi_api_key: str = ""
+    serper_api_key: str = ""
+    finnhub_api_key: str = ""
+    posthog_api_key: str = ""  # the project token (phc_): sends events
+    posthog_host: str = "https://us.i.posthog.com"
+    posthog_project_id: str = ""
+    posthog_personal_api_key: str = ""  # (phx_) reads the numbers back for the Analytics page
+    composio_api_key: str = ""  # one key for the whole platform; never sent to the browser
+    composio_webhook_secret: str = ""  # signs the events Composio sends to us
+    composio_webhook_id: str = ""  # our webhook subscription at Composio
+    # Used by searches when the user does not say where: Google country, currency for stays.
+    default_country: str = "in"
+    default_currency: str = "INR"
 
 
 @lru_cache

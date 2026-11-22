@@ -1,0 +1,405 @@
+// Server data hooks shared by several screens. Each query has one key, listed in `keys`.
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { api } from './api'
+
+export const keys = {
+  llmKeys: ['llm-keys'],
+  models: ['llm-models'],
+  personas: ['personas'],
+  agents: ['agents'],
+  agent: (id) => ['agents', id],
+  sessions: (agentId) => ['sessions', agentId],
+  session: (id) => ['session', id],
+  messages: (sessionId) => ['messages', sessionId],
+  documents: (agentId) => ['documents', agentId],
+  tools: ['tools'],
+  integrations: (agentId) => ['integrations', agentId],
+  automations: (agentId) => ['automations', agentId],
+  automationRuns: (id) => ['automation-runs', id],
+  automationConversation: (agentId) => ['automation-conversation', agentId],
+  agentApi: (agentId) => ['agent-api', agentId],
+}
+
+// --- LLM keys and models --------------------------------------------------------------
+
+export function useLlmKeys() {
+  return useQuery({ queryKey: keys.llmKeys, queryFn: () => api('/llm-keys') })
+}
+
+export function useSaveLlmKey() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: ({ provider, apiKey }) => api(`/llm-keys/${provider}`, { method: 'PUT', body: { api_key: apiKey } }),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.llmKeys }),
+  })
+}
+
+export function useDeleteLlmKey() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (provider) => api(`/llm-keys/${provider}`, { method: 'DELETE' }),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.llmKeys }),
+  })
+}
+
+/** The fixed list of providers and their models. It never changes while the app is open. */
+export function useModelCatalog() {
+  return useQuery({ queryKey: keys.models, queryFn: () => api('/llm-models'), staleTime: Infinity })
+}
+
+export function usePersonas() {
+  return useQuery({ queryKey: keys.personas, queryFn: () => api('/personas'), staleTime: Infinity })
+}
+
+// --- Agents ---------------------------------------------------------------------------
+
+export function useAgents() {
+  return useQuery({ queryKey: keys.agents, queryFn: () => api('/agents') })
+}
+
+export function useAgent(agentId) {
+  return useQuery({
+    queryKey: keys.agent(agentId),
+    queryFn: () => api(`/agents/${agentId}`),
+    enabled: Boolean(agentId),
+  })
+}
+
+/** Runs an agent request, then refreshes the agent list and stores the returned agent. */
+function useAgentMutation(mutationFn) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn,
+    onSuccess: (agent) => {
+      if (agent?.id) client.setQueryData(keys.agent(agent.id), agent)
+      return client.invalidateQueries({ queryKey: keys.agents, exact: true })
+    },
+  })
+}
+
+export function useCreateAgent() {
+  return useAgentMutation((body) => api('/agents', { method: 'POST', body }))
+}
+
+export function useUpdateAgent() {
+  return useAgentMutation(({ id, ...body }) => api(`/agents/${id}`, { method: 'PATCH', body }))
+}
+
+export function useDeployAgent() {
+  return useAgentMutation((id) => api(`/agents/${id}/deploy`, { method: 'POST' }))
+}
+
+export function useStopAgent() {
+  return useAgentMutation((id) => api(`/agents/${id}/stop`, { method: 'POST' }))
+}
+
+export function useDeleteAgent() {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (id) => api(`/agents/${id}`, { method: 'DELETE' }),
+    onSuccess: (_data, id) => {
+      client.removeQueries({ queryKey: keys.agent(id) })
+      client.removeQueries({ queryKey: keys.sessions(id) })
+      return client.invalidateQueries({ queryKey: keys.agents, exact: true })
+    },
+  })
+}
+
+// --- Chats ----------------------------------------------------------------------------
+
+export function useSessions(agentId) {
+  return useQuery({
+    queryKey: keys.sessions(agentId),
+    queryFn: () => api(`/agents/${agentId}/sessions`),
+    enabled: Boolean(agentId),
+  })
+}
+
+export function useCreateSession(agentId) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: () => api(`/agents/${agentId}/sessions`, { method: 'POST' }),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.sessions(agentId) }),
+  })
+}
+
+export function useDeleteSession(agentId) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (sessionId) => api(`/sessions/${sessionId}`, { method: 'DELETE' }),
+    onSuccess: (_data, sessionId) => {
+      client.removeQueries({ queryKey: keys.messages(sessionId) })
+      return client.invalidateQueries({ queryKey: keys.sessions(agentId) })
+    },
+  })
+}
+
+export function useMessages(sessionId) {
+  return useQuery({
+    queryKey: keys.messages(sessionId),
+    queryFn: () => api(`/sessions/${sessionId}/messages`),
+    enabled: Boolean(sessionId),
+  })
+}
+
+// --- Knowledge base and tools -----------------------------------------------------------
+
+const isIndexing = (doc) => doc.status === 'pending' || doc.status === 'processing'
+
+/** An agent's documents. Checks again every 3 seconds while any of them is still being indexed. */
+export function useDocuments(agentId) {
+  return useQuery({
+    queryKey: keys.documents(agentId),
+    queryFn: () => api(`/agents/${agentId}/documents`),
+    enabled: Boolean(agentId),
+    refetchInterval: (query) => (query.state.data?.some(isIndexing) ? 3000 : false),
+  })
+}
+
+/** Takes a FormData holding either `file`, or `title` and `text`. */
+export function useAddDocument(agentId) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (form) => api(`/agents/${agentId}/documents`, { method: 'POST', body: form }),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.documents(agentId) }),
+  })
+}
+
+export function useDeleteDocument(agentId) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (documentId) => api(`/agents/${agentId}/documents/${documentId}`, { method: 'DELETE' }),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.documents(agentId) }),
+  })
+}
+
+export function useToolCatalog() {
+  return useQuery({ queryKey: keys.tools, queryFn: () => api('/tools'), staleTime: Infinity })
+}
+
+export function useSetAgentTools() {
+  return useAgentMutation(({ id, tools }) => api(`/agents/${id}/tools`, { method: 'PUT', body: { tools } }))
+}
+
+// --- App connections ---------------------------------------------------------------------
+
+/** The apps an agent can connect to, with each one's status and (once connected) its actions. */
+export function useIntegrations(agentId) {
+  return useQuery({ queryKey: keys.integrations(agentId), queryFn: () => api(`/agents/${agentId}/integrations`) })
+}
+
+function useIntegrationMutation(agentId, mutationFn) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn,
+    onSettled: () => client.invalidateQueries({ queryKey: keys.integrations(agentId) }),
+  })
+}
+
+export function useConnectApp(agentId) {
+  return useIntegrationMutation(agentId, (app) => api(`/agents/${agentId}/integrations/${app}/connect`, { method: 'POST' }))
+}
+
+export function useRefreshApp(agentId) {
+  return useIntegrationMutation(agentId, (app) => api(`/agents/${agentId}/integrations/${app}/refresh`, { method: 'POST' }))
+}
+
+export function useSetAppActions(agentId) {
+  return useIntegrationMutation(agentId, ({ app, actions }) =>
+    api(`/agents/${agentId}/integrations/${app}/actions`, { method: 'PUT', body: { actions } }),
+  )
+}
+
+export function useDisconnectApp(agentId) {
+  return useIntegrationMutation(agentId, (app) => api(`/agents/${agentId}/integrations/${app}`, { method: 'DELETE' }))
+}
+
+/** Asks Composio whether the agent's connections still work, and keeps the answer. */
+export function useCheckApps(agentId) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: () => api(`/agents/${agentId}/integrations/check`, { method: 'POST' }),
+    onSuccess: (listing) => client.setQueryData(keys.integrations(agentId), listing),
+  })
+}
+
+// --- Automations ----------------------------------------------------------------------------
+
+const RUN_POLL_MS = 2000
+const isRunning = (run) => run?.status === 'running'
+
+/** An agent's automations. Checks again every 2 seconds while any of them is running. */
+export function useAutomations(agentId) {
+  return useQuery({
+    queryKey: keys.automations(agentId),
+    queryFn: () => api(`/agents/${agentId}/automations`),
+    enabled: Boolean(agentId),
+    refetchInterval: (query) => (query.state.data?.some((a) => isRunning(a.last_run)) ? RUN_POLL_MS : false),
+  })
+}
+
+/** The last 20 runs of an automation. Checks again every 2 seconds while one is running. */
+export function useAutomationRuns(automationId) {
+  return useQuery({
+    queryKey: keys.automationRuns(automationId),
+    queryFn: () => api(`/automations/${automationId}/runs`),
+    refetchInterval: (query) => (query.state.data?.some(isRunning) ? RUN_POLL_MS : false),
+  })
+}
+
+export function useSetAutomationStatus(agentId) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, status }) => api(`/automations/${id}`, { method: 'PATCH', body: { status } }),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.automations(agentId) }),
+    // Refused because the agent was stopped meanwhile: show its real status.
+    onError: (err) => err.code === 'agent_not_live' && client.invalidateQueries({ queryKey: keys.agents }),
+  })
+}
+
+export function useDeleteAutomation(agentId) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (id) => api(`/automations/${id}`, { method: 'DELETE' }),
+    onSuccess: (_data, id) => {
+      client.removeQueries({ queryKey: keys.automationRuns(id) })
+      return client.invalidateQueries({ queryKey: keys.automations(agentId) })
+    },
+  })
+}
+
+export function useTestAutomation(agentId) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (id) => api(`/automations/${id}/test`, { method: 'POST' }),
+    onSuccess: (_data, id) =>
+      Promise.all([
+        client.invalidateQueries({ queryKey: keys.automationRuns(id) }),
+        client.invalidateQueries({ queryKey: keys.automations(agentId) }),
+      ]),
+  })
+}
+
+/** The agent's latest describe conversation, or null when it has none yet. */
+export function useAutomationConversation(agentId) {
+  return useQuery({
+    queryKey: keys.automationConversation(agentId),
+    queryFn: () =>
+      api(`/agents/${agentId}/automation-conversations/latest`).catch((err) => {
+        if (err.status === 404) return null
+        throw err
+      }),
+    enabled: Boolean(agentId),
+  })
+}
+
+export function useStartAutomationConversation(agentId) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: () => api(`/agents/${agentId}/automation-conversations`, { method: 'POST' }),
+    onSuccess: (session) => client.setQueryData(keys.automationConversation(agentId), session),
+    onError: (err) => err.code === 'agent_not_live' && client.invalidateQueries({ queryKey: keys.agents }),
+  })
+}
+
+// --- Analytics ------------------------------------------------------------------------------
+
+/** One agent's numbers for a period ("7d", "30d", "90d"), read from PostHog by the backend. */
+export function useAnalytics(agentId, range, enabled = true) {
+  return useQuery({
+    queryKey: ['analytics', agentId, range],
+    // Days are counted in the viewer's own time zone.
+    queryFn: () => {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+      return api(`/agents/${agentId}/analytics?range=${range}&tz=${encodeURIComponent(tz)}`)
+    },
+    enabled: Boolean(agentId) && enabled,
+  })
+}
+
+/** Fetched only while the Automations tab is open. */
+export function useAutomationAnalytics(agentId, range, enabled = true) {
+  return useQuery({
+    queryKey: ['analytics', agentId, range, 'automations'],
+    queryFn: () => {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+      return api(`/agents/${agentId}/analytics/automations?range=${range}&tz=${encodeURIComponent(tz)}`)
+    },
+    enabled: Boolean(agentId) && enabled,
+  })
+}
+
+export function useApiAnalytics(agentId, range, enabled = true) {
+  return useQuery({
+    queryKey: ['analytics', agentId, range, 'api'],
+    queryFn: () => {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+      return api(`/agents/${agentId}/analytics/api?range=${range}&tz=${encodeURIComponent(tz)}`)
+    },
+    enabled: Boolean(agentId) && enabled,
+  })
+}
+
+// --- Agent API (keys and settings) ----------------------------------------------------------
+
+export function useAgentApi(agentId) {
+  return useQuery({
+    queryKey: keys.agentApi(agentId),
+    queryFn: () => api(`/agents/${agentId}/api`),
+    enabled: Boolean(agentId),
+  })
+}
+
+/** The new key is in the response only; it is returned to the caller and never cached. */
+export function useCreateApiKey(agentId) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (name) => api(`/agents/${agentId}/api/keys`, { method: 'POST', body: { name } }),
+    gcTime: 0, // the new key is not kept in the cache after the dialog closes
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.agentApi(agentId) }),
+  })
+}
+
+// Days are counted in the viewer's own time zone.
+const zone = () => encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC')
+
+export function useApiRecentCalls(agentId) {
+  return useQuery({
+    queryKey: [...keys.agentApi(agentId), 'calls', 'recent'],
+    queryFn: () => api(`/agents/${agentId}/api/calls/recent`),
+    enabled: Boolean(agentId),
+  })
+}
+
+export function useApiCallDays(agentId) {
+  return useQuery({
+    queryKey: [...keys.agentApi(agentId), 'calls', 'days'],
+    queryFn: () => api(`/agents/${agentId}/api/calls/days?tz=${zone()}`),
+    enabled: Boolean(agentId),
+  })
+}
+
+export function useApiCallsPage(agentId, day, page) {
+  return useQuery({
+    queryKey: [...keys.agentApi(agentId), 'calls', 'day', day, page],
+    queryFn: () => api(`/agents/${agentId}/api/calls?day=${day}&tz=${zone()}&page=${page}`),
+    placeholderData: keepPreviousData,
+    enabled: Boolean(agentId && day),
+  })
+}
+
+export function useRevokeApiKey(agentId) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (keyId) => api(`/agents/${agentId}/api/keys/${keyId}`, { method: 'DELETE' }),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.agentApi(agentId) }),
+  })
+}
+
+export function useUpdateApiSettings(agentId) {
+  const client = useQueryClient()
+  return useMutation({
+    mutationFn: (body) => api(`/agents/${agentId}/api`, { method: 'PATCH', body }),
+    onSuccess: () => client.invalidateQueries({ queryKey: keys.agentApi(agentId) }),
+  })
+}

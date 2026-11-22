@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     Text,
     UniqueConstraint,
     func,
@@ -58,6 +59,7 @@ class Agent(Base):
     __table_args__ = (
         CheckConstraint("status in ('draft', 'live', 'stopped')", name="ck_agents_status"),
         CheckConstraint("search_mode in ('semantic', 'keyword', 'hybrid')", name="ck_agents_search_mode"),
+        CheckConstraint("api_calls_per_minute between 1 and 600", name="ck_agents_api_calls_per_minute"),
         Index("ix_agents_user_id", "user_id"),
     )
 
@@ -73,11 +75,101 @@ class Agent(Base):
     # Unused until the knowledge base arrives in stage 2.
     kb_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     search_mode: Mapped[str] = mapped_column(Text, nullable=False, default="hybrid", server_default="hybrid")
+    # True: answer only from the documents. False: documents first, then general knowledge.
+    kb_strict: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     status: Mapped[str] = mapped_column(Text, nullable=False, default="draft", server_default="draft")
+    # Agent API: may a key's calls run write actions, and how many calls a minute are allowed.
+    api_actions: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    api_calls_per_minute: Mapped[int] = mapped_column(Integer, nullable=False, default=60, server_default="60")
     created_at: Mapped[datetime] = _created_at()
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+    tool_rows: Mapped[list["AgentTool"]] = relationship(lazy="selectin", cascade="all, delete-orphan")
+
+    @property
+    def tools(self) -> list[str]:
+        """Names of the registry tools switched on for this agent."""
+        return sorted(row.tool_name for row in self.tool_rows)
+
+
+class AgentTool(Base):
+    """One registry tool switched on for one agent."""
+
+    __tablename__ = "agent_tools"
+    __table_args__ = (UniqueConstraint("agent_id", "tool_name", name="uq_agent_tools_agent_tool"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    tool_name: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = _created_at()
+
+
+class AgentIntegration(Base):
+    """One outside app (Gmail, Slack, ...) connected to one agent through Composio. Only
+    Composio's handle for the connection is kept here; the app's tokens never leave Composio."""
+
+    __tablename__ = "agent_integrations"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "app", name="uq_agent_integrations_agent_app"),
+        CheckConstraint("status in ('pending', 'active', 'expired')", name="ck_agent_integrations_status"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    app: Mapped[str] = mapped_column(Text, nullable=False)
+    connected_account_id: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="pending", server_default="pending")
+    # The names of the app's actions switched on for this agent.
+    actions: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class Document(Base):
+    """One document in an agent's knowledge base. Its text lives in document_chunks, its vectors in Chroma."""
+
+    __tablename__ = "documents"
+    __table_args__ = (
+        CheckConstraint("source_type in ('pdf', 'txt', 'paste')", name="ck_documents_source_type"),
+        CheckConstraint("status in ('pending', 'processing', 'ready', 'failed')", name="ck_documents_status"),
+        UniqueConstraint("agent_id", "content_hash", name="uq_documents_agent_hash"),
+        Index("ix_documents_agent_id", "agent_id"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    filename: Mapped[str] = mapped_column(Text, nullable=False)
+    source_type: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="pending", server_default="pending")
+    error: Mapped[str | None] = mapped_column(Text)
+    content_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    # Recorded so vectors from different models or methods are never mixed up later.
+    embedding_model: Mapped[str] = mapped_column(Text, nullable=False)
+    chunking_method: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = _created_at()
+
+
+class DocumentChunk(Base):
+    __tablename__ = "document_chunks"
+    __table_args__ = (Index("ix_document_chunks_agent_id", "agent_id"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=False)
+    agent_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    # `content` is the text that is searched. `context` is what the model is given
+    # instead, when it differs (parent-child chunking); null means use `content`.
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    context: Mapped[str | None] = mapped_column(Text)
+    page: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = _created_at()
 
 
 class ChatSession(Base):
@@ -92,6 +184,8 @@ class ChatSession(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False, default="New chat", server_default="New chat")
     summary: Mapped[str | None] = mapped_column(Text)
     summary_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # "chat" or "automation" (a describe conversation); chat lists show only "chat".
+    purpose: Mapped[str] = mapped_column(Text, nullable=False, default="chat", server_default="chat")
     created_at: Mapped[datetime] = _created_at()
     last_message_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -111,8 +205,107 @@ class Message(Base):
     session_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
     role: Mapped[str] = mapped_column(Text, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    # Unused until tools arrive in stage 2.
-    tool_calls: Mapped[dict | None] = mapped_column(JSONB)
+    # For assistant rows: the tools that ran, as [{label, ok}], and the sources shown,
+    # as [{document_name, page, excerpt}].
+    tool_calls: Mapped[list | None] = mapped_column(JSONB)
+    sources: Mapped[list | None] = mapped_column(JSONB)
+    # A details form shown with this reply: {kind: "ask" | "refine", tool, title, fields, values}.
+    form: Mapped[dict | None] = mapped_column(JSONB)
+    # An app action waiting for, or given, the user's approval. Holds no account or user ID:
+    # the browser reads it. The account comes from agent_integrations when it runs.
+    approval: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.clock_timestamp(), nullable=False
     )
+
+
+class Automation(Base):
+    __tablename__ = "automations"
+    __table_args__ = (
+        CheckConstraint("status in ('active', 'paused', 'error')", name="ck_automations_status"),
+        CheckConstraint("trigger_kind in ('schedule', 'event', 'watch')", name="ck_automations_trigger_kind"),
+        Index("ix_automations_status_next_run", "status", "next_run_at"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    task: Mapped[str] = mapped_column(Text, nullable=False)
+    trigger_text: Mapped[str] = mapped_column(Text, nullable=False)
+    trigger_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    trigger: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    tools: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
+    # Tool name -> {argument: value}: values every run must use.
+    locked: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="active", server_default="active")
+    status_reason: Mapped[str | None] = mapped_column(Text)
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failure_streak: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("sessions.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = _created_at()
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class AutomationRun(Base):
+    __tablename__ = "automation_runs"
+    __table_args__ = (
+        CheckConstraint("source in ('schedule', 'event', 'watch', 'test')", name="ck_automation_runs_source"),
+        CheckConstraint("status in ('running', 'succeeded', 'failed')", name="ck_automation_runs_status"),
+        UniqueConstraint("automation_id", "event_key", name="uq_automation_runs_event_key"),
+    )
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    automation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("automations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="running", server_default="running")
+    started_at: Mapped[datetime] = _created_at()
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    output: Mapped[str | None] = mapped_column(Text)
+    tool_calls: Mapped[list | None] = mapped_column(JSONB)
+    error: Mapped[str | None] = mapped_column(Text)
+    event: Mapped[dict | None] = mapped_column(JSONB)
+    event_key: Mapped[str | None] = mapped_column(Text)
+
+
+class AgentApiKey(Base):
+    """A secret that lets one agent be called from outside. Only the SHA-256 of it is kept."""
+
+    __tablename__ = "agent_api_keys"
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    agent_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("agents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    key_hash: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    hint: Mapped[str] = mapped_column(Text, nullable=False)  # the key's last 4 characters
+    created_at: Mapped[datetime] = _created_at()
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ApiCall(Base):
+    """One call made through the Agent API, kept for the owner's call log."""
+
+    __tablename__ = "api_calls"
+    __table_args__ = (Index("ix_api_calls_agent_id_created_at", "agent_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = _uuid_pk()
+    agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("agents.id", ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    key_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("agent_api_keys.id", ondelete="SET NULL"))
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    reply: Mapped[str] = mapped_column(Text, nullable=False, default="", server_default="")
+    tools_used: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
+    sources: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default="[]")
+    outcome: Mapped[str] = mapped_column(Text, nullable=False)  # "ok" or the error code
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = _created_at()

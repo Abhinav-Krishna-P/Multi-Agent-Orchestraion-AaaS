@@ -15,3 +15,9 @@ dist/
 
 # Tooling scratch
 .superpowers/
+
+# Browser automation scratch
+.playwright-mcp/
+
+# The owner's own RAG test documents (may be private)
+Project data/rag-test-docs/
